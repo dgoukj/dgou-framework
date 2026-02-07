@@ -1,0 +1,110 @@
+# config/alert_rules.yaml
+groups:
+  - name: application_alerts
+    rules:
+      # HTTP错误率告警
+      - alert: HighHttpErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High HTTP error rate detected"
+          description: "HTTP error rate is {{ printf \"%.2f\" $value }}% for service {{ $labels.service }}"
+          runbook_url: "https://example.com/runbooks/high-http-error-rate"
+
+      # 请求延迟告警
+      - alert: HighRequestLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 2m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High request latency detected"
+          description: "95th percentile request latency is {{ printf \"%.2f\" $value }}s"
+          runbook_url: "https://example.com/runbooks/high-request-latency"
+
+      # 内存使用告警
+      - alert: HighMemoryUsage
+        expr: go_mem_alloc_bytes / go_mem_sys_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ printf \"%.2f\" $value }}%"
+          runbook_url: "https://example.com/runbooks/high-memory-usage"
+
+      # 协程数量告警
+      - alert: HighGoroutineCount
+        expr: go_goroutines > 1000
+        for: 2m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High goroutine count detected"
+          description: "Goroutine count is {{ $value }}"
+          runbook_url: "https://example.com/runbooks/high-goroutine-count"
+
+      # 数据库连接池告警
+      - alert: HighDatabaseConnections
+        expr: db_connections_in_use / db_connections_open > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High database connection usage"
+          description: "Database connection usage is {{ printf \"%.2f\" $value }}%"
+          runbook_url: "https://example.com/runbooks/high-database-connections"
+
+      # 缓存命中率告警
+      - alert: LowCacheHitRate
+        expr: rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_total[5m])) < 0.7
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "Low cache hit rate detected"
+          description: "Cache hit rate is {{ printf \"%.2f\" $value }}%"
+          runbook_url: "https://example.com/runbooks/low-cache-hit-rate"
+
+      # 服务下线告警
+      - alert: ServiceDown
+        expr: up{job="{{ .ServiceName }}"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "Service is down"
+          description: "Service {{ $labels.service }} has been down for more than 1 minute"
+          runbook_url: "https://example.com/runbooks/service-down"
+
+      # 磁盘空间告警
+      - alert: LowDiskSpace
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low disk space on root filesystem"
+          description: "Only {{ printf \"%.2f\" $value }}% available on root filesystem"
+          runbook_url: "https://example.com/runbooks/low-disk-space"
+
+      # CPU使用率告警
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ printf \"%.2f\" $value }}%"
+          runbook_url: "https://example.com/runbooks/high-cpu-usage"

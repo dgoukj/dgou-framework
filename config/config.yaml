@@ -1,0 +1,90 @@
+server:
+  port: 8080
+  mode: release
+  read_timeout: 30
+  write_timeout: 30
+  shutdown_timeout: 10
+  enable_https: false
+  enable_gzip: true
+  max_request_body: 10485760
+
+mysql:
+  host: localhost
+  port: 3306
+  user: root
+  password: ""
+  dbname: app
+  max_open_conns: 100
+  max_idle_conns: 10
+  charset: utf8mb4
+  parse_time: true
+  loc: Local
+
+redis:
+  addr: localhost:6379
+  password: ""
+  db: 0
+  pool_size: 100
+  min_idle_conns: 10
+  max_retries: 3
+
+queue:
+  broker: redis
+  buffer_size: 1000
+
+upload:
+  type: local
+  local_path: ./uploads
+  max_size: 10485760
+  allow_exts:
+    - .jpg
+    - .jpeg
+    - .png
+    - .gif
+    - .pdf
+
+jwt:
+  secret: "your-secret-key-at-least-32-chars-long"
+  issuer: app
+  expire_hours: 24
+  refresh_hours: 168
+  audience: app-client
+
+oss:
+  endpoint: oss-cn-hangzhou.aliyuncs.com
+  access_key_id: ""
+  access_key_secret: ""
+  bucket_name: ""
+  domain: ""
+
+rabbitmq:
+  url: amqp://guest:guest@localhost:5672/
+  exchange: app_exchange
+
+log:
+  level: info
+  file: ./logs/app.log
+  max_size: 100
+  max_backups: 3
+  max_age: 7
+  compress: true
+  add_caller: true
+
+monitor:
+  enable_metrics: true
+  metrics_path: /metrics
+  enable_health: true
+  health_path: /health
+  enable_profiling: false
+  profile_path: /debug/pprof
+
+security:
+  enable_rate_limit: true
+  rate_limit: 100
+  enable_cors: true
+  enable_csrf: false
+  csrf_secret: ""
+  trusted_proxies:
+    - "127.0.0.1"
+  enable_xss_filter: true
+  enable_hsts: true
