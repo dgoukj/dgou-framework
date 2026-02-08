@@ -4,10 +4,8 @@ import (
 	"context"
 	"dgou/pkg/config"
 	"dgou/pkg/errors"
-	"dgou/pkg/logger"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -509,19 +507,57 @@ func (rc *RedisCache) Close() error {
 	return rc.client.Close()
 }
 
-// generateLockToken 生成锁令牌
-func generateLockToken() string {
-	return fmt.Sprintf("lock:%d:%d", time.Now().UnixNano(), time.Now().Unix())
+// GetOrSet 获取或设置值
+func (rc *RedisCache) GetOrSet(ctx context.Context, key string, fn func() (interface{}, error), ttl time.Duration) (string, error) {
+	// 先尝试获取
+	value, err := rc.Get(ctx, key)
+	if err == nil {
+		return value, nil
+	}
+
+	// 如果不存在，执行函数获取值
+	data, err := fn()
+	if err != nil {
+		return "", err
+	}
+
+	// 设置到缓存
+	if err := rc.Set(ctx, key, data, ttl); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%v", data), nil
+}
+
+// GetBit 获取位值
+func (rc *RedisCache) GetBit(ctx context.Context, key string, offset int64) (int64, error) {
+	fullKey := rc.buildKey(key)
+	result, err := rc.client.GetBit(ctx, fullKey, offset).Result()
+	if err != nil {
+		return 0, errors.Wrap(err, errors.CodeInternalError, "Failed to get bit")
+	}
+	return result, nil
+}
+
+// SetBit 设置位值
+func (rc *RedisCache) SetBit(ctx context.Context, key string, offset int64, value int) error {
+	fullKey := rc.buildKey(key)
+	err := rc.client.SetBit(ctx, fullKey, offset, value).Err()
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to set bit")
+	}
+	return nil
+}
+
+// Stats 实现Cache接口的Stats方法
+func (rc *RedisCache) Stats() CacheStats {
+	// Redis版本返回空统计
+	return CacheStats{}
 }
 
 // GetClient 获取Redis客户端（用于高级操作）
 func (rc *RedisCache) GetClient() *redis.Client {
 	return rc.client
-}
-
-// Stats 获取Redis统计信息
-func (rc *RedisCache) Stats() *redis.PoolStats {
-	return rc.client.PoolStats()
 }
 
 // RedisBloomFilter Redis布隆过滤器实现
@@ -538,66 +574,33 @@ func NewRedisBloomFilter(cache Cache) (*RedisBloomFilter, error) {
 
 // Add 添加元素到布隆过滤器
 func (bf *RedisBloomFilter) Add(ctx context.Context, key string, value string) error {
-	// Redis布隆过滤器使用RedisBloom模块
-	// 这里简化实现，使用位图模拟
-	// 实际项目中建议使用RedisBloom模块
-
-	// 计算哈希值
-	hash1 := hash1(value)
-	hash2 := hash2(value)
-
-	// 设置位
-	if err := bf.cache.SetBit(ctx, key, hash1, 1); err != nil {
-		return err
-	}
-	if err := bf.cache.SetBit(ctx, key, hash2, 1); err != nil {
-		return err
-	}
-
-	return nil
+	// 简化实现：直接使用字符串集合
+	setKey := "bloom:" + key
+	return bf.cache.SAdd(ctx, setKey, value)
 }
 
 // Exists 检查元素是否存在
 func (bf *RedisBloomFilter) Exists(ctx context.Context, key string, value string) (bool, error) {
-	// 计算哈希值
-	hash1 := hash1(value)
-	hash2 := hash2(value)
+	setKey := "bloom:" + key
 
-	// 获取位
-	bit1, err := bf.cache.GetBit(ctx, key, hash1)
+	// 使用集合的成员检查
+	members, err := bf.cache.SMembers(ctx, setKey)
 	if err != nil {
 		return false, err
 	}
 
-	bit2, err := bf.cache.GetBit(ctx, key, hash2)
-	if err != nil {
-		return false, err
+	// 检查值是否在集合中（简化实现）
+	for _, member := range members {
+		if member == value {
+			return true, nil
+		}
 	}
 
-	return bit1 == 1 && bit2 == 1, nil
+	return false, nil
 }
 
 // Clear 清空布隆过滤器
 func (bf *RedisBloomFilter) Clear(ctx context.Context, key string) error {
-	return bf.cache.Delete(ctx, key)
-}
-
-// hash1 哈希函数1
-func hash1(value string) int64 {
-	// 简单哈希函数，实际项目中应使用更好的哈希算法
-	var hash int64 = 5381
-	for i := 0; i < len(value); i++ {
-		hash = ((hash << 5) + hash) + int64(value[i])
-	}
-	return hash % (1 << 32)
-}
-
-// hash2 哈希函数2
-func hash2(value string) int64 {
-	// 另一个哈希函数
-	var hash int64 = 0
-	for i := 0; i < len(value); i++ {
-		hash = (hash * 31) + int64(value[i])
-	}
-	return hash % (1 << 32)
+	setKey := "bloom:" + key
+	return bf.cache.Delete(ctx, setKey)
 }

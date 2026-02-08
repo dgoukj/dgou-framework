@@ -7,6 +7,7 @@ import (
 	"dgou/pkg/logger"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -51,7 +52,7 @@ func NewMemoryCache(config *CacheConfig) (*MemoryCache, error) {
 	go mc.startCleanup()
 
 	logger.Info("Memory cache initialized",
-		logger.Int64("max_memory_mb", config.MaxMemoryMB),
+		logger.Int64("max_memory_mb", int64(config.MaxMemoryMB)),
 	)
 
 	return mc, nil
@@ -296,10 +297,32 @@ func (mc *MemoryCache) MDelete(ctx context.Context, keys []string) error {
 	return nil
 }
 
+// GetOrSet 获取或设置值
+func (mc *MemoryCache) GetOrSet(ctx context.Context, key string, fn func() (interface{}, error), ttl time.Duration) (string, error) {
+	// 先尝试获取
+	value, err := mc.Get(ctx, key)
+	if err == nil {
+		return value, nil
+	}
+
+	// 如果不存在，执行函数获取值
+	data, err := fn()
+	if err != nil {
+		return "", err
+	}
+
+	// 设置到缓存
+	if err := mc.Set(ctx, key, data, ttl); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%v", data), nil
+}
+
 // Increment 自增
 func (mc *MemoryCache) Increment(ctx context.Context, key string, value int64) (int64, error) {
 	current, err := mc.Get(ctx, key)
-	if err != nil && !errors.Is(err, errors.CodeResourceNotFound) {
+	if err != nil && !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "Key not found") {
 		return 0, err
 	}
 
@@ -352,9 +375,578 @@ func (mc *MemoryCache) TTL(ctx context.Context, key string) (time.Duration, erro
 	return entry.expiresAt.Sub(now), nil
 }
 
-// 其他接口方法实现...
-// 由于代码长度限制，这里省略了一些方法的完整实现
-// 实际项目中需要实现所有Cache接口方法
+// SAdd 集合添加成员
+func (mc *MemoryCache) SAdd(ctx context.Context, key string, members ...interface{}) error {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	setKey := fmt.Sprintf("set:%s", key)
+
+	// 获取现有的集合数据
+	var setMembers []string
+	if value, ok := mc.store.Load(setKey); ok {
+		entry := value.(*cacheEntry)
+		if err := json.Unmarshal([]byte(entry.value), &setMembers); err != nil {
+			setMembers = []string{}
+		}
+	} else {
+		setMembers = []string{}
+	}
+
+	// 添加新成员（去重）
+	existing := make(map[string]bool)
+	for _, member := range setMembers {
+		existing[member] = true
+	}
+
+	for _, member := range members {
+		var memberStr string
+		switch v := member.(type) {
+		case string:
+			memberStr = v
+		default:
+			data, err := json.Marshal(member)
+			if err != nil {
+				return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal member")
+			}
+			memberStr = string(data)
+		}
+
+		if !existing[memberStr] {
+			setMembers = append(setMembers, memberStr)
+			existing[memberStr] = true
+		}
+	}
+
+	// 序列化并存储
+	data, err := json.Marshal(setMembers)
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal set members")
+	}
+
+	// 计算大小差异
+	var oldSize int64
+	if oldValue, ok := mc.store.Load(setKey); ok {
+		oldEntry := oldValue.(*cacheEntry)
+		oldSize = oldEntry.size
+	}
+
+	entry := &cacheEntry{
+		key:       setKey,
+		value:     string(data),
+		expiresAt: time.Time{}, // 永不过期，除非显式设置
+		size:      int64(len(setKey) + len(data)),
+	}
+
+	mc.store.Store(setKey, entry)
+	mc.memoryUsage += entry.size - oldSize
+
+	return nil
+}
+
+// SRem 集合删除成员
+func (mc *MemoryCache) SRem(ctx context.Context, key string, members ...interface{}) error {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	setKey := fmt.Sprintf("set:%s", key)
+
+	// 获取现有的集合数据
+	value, ok := mc.store.Load(setKey)
+	if !ok {
+		return nil // 集合不存在，无需删除
+	}
+
+	entry := value.(*cacheEntry)
+	var setMembers []string
+	if err := json.Unmarshal([]byte(entry.value), &setMembers); err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to unmarshal set members")
+	}
+
+	// 创建要删除的成员映射
+	toRemove := make(map[string]bool)
+	for _, member := range members {
+		var memberStr string
+		switch v := member.(type) {
+		case string:
+			memberStr = v
+		default:
+			data, err := json.Marshal(member)
+			if err != nil {
+				return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal member")
+			}
+			memberStr = string(data)
+		}
+		toRemove[memberStr] = true
+	}
+
+	// 过滤出要保留的成员
+	var newMembers []string
+	for _, member := range setMembers {
+		if !toRemove[member] {
+			newMembers = append(newMembers, member)
+		}
+	}
+
+	// 如果集合为空，删除整个键
+	if len(newMembers) == 0 {
+		mc.deleteInternal(setKey)
+		return nil
+	}
+
+	// 序列化并存储更新后的数据
+	data, err := json.Marshal(newMembers)
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal set members")
+	}
+
+	newEntry := &cacheEntry{
+		key:       setKey,
+		value:     string(data),
+		expiresAt: entry.expiresAt, // 保持原有过期时间
+		size:      int64(len(setKey) + len(data)),
+	}
+
+	mc.store.Store(setKey, newEntry)
+	mc.memoryUsage += newEntry.size - entry.size
+
+	return nil
+}
+
+// SMembers 获取集合所有成员
+func (mc *MemoryCache) SMembers(ctx context.Context, key string) ([]string, error) {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+
+	setKey := fmt.Sprintf("set:%s", key)
+	value, ok := mc.store.Load(setKey)
+	if !ok {
+		return []string{}, nil
+	}
+
+	entry := value.(*cacheEntry)
+
+	// 解析集合数据
+	var members []string
+	if err := json.Unmarshal([]byte(entry.value), &members); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternalError, "Failed to unmarshal set members")
+	}
+
+	return members, nil
+}
+
+// SIsMember 判断元素是否是集合成员
+func (mc *MemoryCache) SIsMember(ctx context.Context, key string, member interface{}) (bool, error) {
+	members, err := mc.SMembers(ctx, key)
+	if err != nil {
+		return false, err
+	}
+
+	var memberStr string
+	switch v := member.(type) {
+	case string:
+		memberStr = v
+	default:
+		data, err := json.Marshal(member)
+		if err != nil {
+			return false, errors.Wrap(err, errors.CodeInternalError, "Failed to marshal member")
+		}
+		memberStr = string(data)
+	}
+
+	for _, m := range members {
+		if m == memberStr {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// HSet 设置哈希字段值
+func (mc *MemoryCache) HSet(ctx context.Context, key string, field string, value interface{}) error {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	hashKey := fmt.Sprintf("hash:%s", key)
+
+	// 获取现有的哈希数据
+	var hashData map[string]string
+	if value, ok := mc.store.Load(hashKey); ok {
+		entry := value.(*cacheEntry)
+		if err := json.Unmarshal([]byte(entry.value), &hashData); err != nil {
+			hashData = make(map[string]string)
+		}
+	} else {
+		hashData = make(map[string]string)
+	}
+
+	// 设置字段值
+	var strValue string
+	switch v := value.(type) {
+	case string:
+		strValue = v
+	default:
+		data, err := json.Marshal(value)
+		if err != nil {
+			return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal value")
+		}
+		strValue = string(data)
+	}
+
+	hashData[field] = strValue
+
+	// 序列化并存储
+	data, err := json.Marshal(hashData)
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal hash data")
+	}
+
+	entry := &cacheEntry{
+		key:       hashKey,
+		value:     string(data),
+		expiresAt: time.Time{}, // 永不过期，除非显式设置
+		size:      int64(len(hashKey) + len(data)),
+	}
+
+	mc.store.Store(hashKey, entry)
+	mc.memoryUsage += entry.size
+
+	return nil
+}
+
+// HGet 获取哈希字段值
+func (mc *MemoryCache) HGet(ctx context.Context, key string, field string) (string, error) {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+
+	hashKey := fmt.Sprintf("hash:%s", key)
+	value, ok := mc.store.Load(hashKey)
+	if !ok {
+		return "", errors.New(errors.CodeResourceNotFound, "Hash not found")
+	}
+
+	entry := value.(*cacheEntry)
+
+	// 解析哈希数据
+	var hashData map[string]string
+	if err := json.Unmarshal([]byte(entry.value), &hashData); err != nil {
+		return "", errors.Wrap(err, errors.CodeInternalError, "Failed to unmarshal hash data")
+	}
+
+	fieldValue, ok := hashData[field]
+	if !ok {
+		return "", errors.New(errors.CodeResourceNotFound, "Field not found")
+	}
+
+	return fieldValue, nil
+}
+
+// HGetAll 获取哈希所有字段
+func (mc *MemoryCache) HGetAll(ctx context.Context, key string) (map[string]string, error) {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+
+	hashKey := fmt.Sprintf("hash:%s", key)
+	value, ok := mc.store.Load(hashKey)
+	if !ok {
+		return map[string]string{}, nil
+	}
+
+	entry := value.(*cacheEntry)
+
+	// 解析哈希数据
+	var hashData map[string]string
+	if err := json.Unmarshal([]byte(entry.value), &hashData); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternalError, "Failed to unmarshal hash data")
+	}
+
+	return hashData, nil
+}
+
+// HDelete 删除哈希字段
+func (mc *MemoryCache) HDelete(ctx context.Context, key string, fields ...string) error {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	hashKey := fmt.Sprintf("hash:%s", key)
+	value, ok := mc.store.Load(hashKey)
+	if !ok {
+		return nil
+	}
+
+	entry := value.(*cacheEntry)
+
+	// 解析哈希数据
+	var hashData map[string]string
+	if err := json.Unmarshal([]byte(entry.value), &hashData); err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to unmarshal hash data")
+	}
+
+	// 删除指定字段
+	for _, field := range fields {
+		delete(hashData, field)
+	}
+
+	// 如果哈希为空，删除整个键
+	if len(hashData) == 0 {
+		mc.deleteInternal(hashKey)
+		return nil
+	}
+
+	// 序列化并存储更新后的数据
+	data, err := json.Marshal(hashData)
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal hash data")
+	}
+
+	newEntry := &cacheEntry{
+		key:       hashKey,
+		value:     string(data),
+		expiresAt: entry.expiresAt, // 保持原有过期时间
+		size:      int64(len(hashKey) + len(data)),
+	}
+
+	mc.store.Store(hashKey, newEntry)
+	mc.memoryUsage += newEntry.size - entry.size
+
+	return nil
+}
+
+// LPush 列表推送
+func (mc *MemoryCache) LPush(ctx context.Context, key string, values ...interface{}) error {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	listKey := fmt.Sprintf("list:%s", key)
+
+	// 获取现有的列表数据
+	var listValues []string
+	if value, ok := mc.store.Load(listKey); ok {
+		entry := value.(*cacheEntry)
+		if err := json.Unmarshal([]byte(entry.value), &listValues); err != nil {
+			listValues = []string{}
+		}
+	} else {
+		listValues = []string{}
+	}
+
+	// 将新值添加到列表头部
+	var newValues []string
+	for _, val := range values {
+		var strValue string
+		switch v := val.(type) {
+		case string:
+			strValue = v
+		default:
+			data, err := json.Marshal(val)
+			if err != nil {
+				return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal value")
+			}
+			strValue = string(data)
+		}
+		newValues = append(newValues, strValue)
+	}
+
+	// 新值在前，旧值在后
+	listValues = append(newValues, listValues...)
+
+	// 序列化并存储
+	data, err := json.Marshal(listValues)
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal list values")
+	}
+
+	// 计算大小差异
+	var oldSize int64
+	if oldValue, ok := mc.store.Load(listKey); ok {
+		oldEntry := oldValue.(*cacheEntry)
+		oldSize = oldEntry.size
+	}
+
+	entry := &cacheEntry{
+		key:       listKey,
+		value:     string(data),
+		expiresAt: time.Time{}, // 永不过期，除非显式设置
+		size:      int64(len(listKey) + len(data)),
+	}
+
+	mc.store.Store(listKey, entry)
+	mc.memoryUsage += entry.size - oldSize
+
+	return nil
+}
+
+// LPop 列表弹出
+func (mc *MemoryCache) LPop(ctx context.Context, key string) (string, error) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	listKey := fmt.Sprintf("list:%s", key)
+
+	// 获取现有的列表数据
+	value, ok := mc.store.Load(listKey)
+	if !ok {
+		return "", errors.New(errors.CodeResourceNotFound, "List not found")
+	}
+
+	entry := value.(*cacheEntry)
+	var listValues []string
+	if err := json.Unmarshal([]byte(entry.value), &listValues); err != nil {
+		return "", errors.Wrap(err, errors.CodeInternalError, "Failed to unmarshal list values")
+	}
+
+	if len(listValues) == 0 {
+		return "", errors.New(errors.CodeResourceNotFound, "List is empty")
+	}
+
+	// 弹出第一个元素
+	popped := listValues[0]
+	listValues = listValues[1:]
+
+	// 如果列表为空，删除整个键
+	if len(listValues) == 0 {
+		mc.deleteInternal(listKey)
+		return popped, nil
+	}
+
+	// 序列化并存储更新后的数据
+	data, err := json.Marshal(listValues)
+	if err != nil {
+		return "", errors.Wrap(err, errors.CodeInternalError, "Failed to marshal list values")
+	}
+
+	newEntry := &cacheEntry{
+		key:       listKey,
+		value:     string(data),
+		expiresAt: entry.expiresAt, // 保持原有过期时间
+		size:      int64(len(listKey) + len(data)),
+	}
+
+	mc.store.Store(listKey, newEntry)
+	mc.memoryUsage += newEntry.size - entry.size
+
+	return popped, nil
+}
+
+// LRange 获取列表范围
+func (mc *MemoryCache) LRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+
+	listKey := fmt.Sprintf("list:%s", key)
+
+	// 获取现有的列表数据
+	value, ok := mc.store.Load(listKey)
+	if !ok {
+		return []string{}, nil
+	}
+
+	entry := value.(*cacheEntry)
+	var listValues []string
+	if err := json.Unmarshal([]byte(entry.value), &listValues); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternalError, "Failed to unmarshal list values")
+	}
+
+	// 处理负索引
+	length := int64(len(listValues))
+	if start < 0 {
+		start = length + start
+	}
+	if stop < 0 {
+		stop = length + stop
+	}
+
+	// 边界检查
+	if start < 0 {
+		start = 0
+	}
+	if start >= length {
+		return []string{}, nil
+	}
+	if stop >= length {
+		stop = length - 1
+	}
+	if stop < start {
+		return []string{}, nil
+	}
+
+	return listValues[start : stop+1], nil
+}
+
+// Publish 发布消息
+func (mc *MemoryCache) Publish(ctx context.Context, channel string, message interface{}) error {
+	// 内存缓存不支持发布订阅，返回错误
+	return errors.New(errors.CodeInternalError, "Pub/Sub not supported in memory cache")
+}
+
+// Subscribe 订阅消息
+func (mc *MemoryCache) Subscribe(ctx context.Context, channel string, handler func(message string)) error {
+	// 内存缓存不支持发布订阅，返回错误
+	return errors.New(errors.CodeInternalError, "Pub/Sub not supported in memory cache")
+}
+
+// Lock 获取分布式锁
+func (mc *MemoryCache) Lock(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	lockKey := fmt.Sprintf("lock:%s", key)
+	token := generateLockToken()
+
+	// 尝试设置锁
+	err := mc.Set(ctx, lockKey, token, ttl)
+	if err != nil {
+		return "", err
+	}
+
+	// 检查是否成功获取锁
+	existingToken, err := mc.Get(ctx, lockKey)
+	if err != nil || existingToken != token {
+		return "", errors.New(errors.CodeInternalError, "Failed to acquire lock")
+	}
+
+	return token, nil
+}
+
+// Unlock 释放分布式锁
+func (mc *MemoryCache) Unlock(ctx context.Context, key, token string) error {
+	lockKey := fmt.Sprintf("lock:%s", key)
+
+	// 检查令牌是否匹配
+	existingToken, err := mc.Get(ctx, lockKey)
+	if err != nil {
+		return err
+	}
+
+	if existingToken != token {
+		return errors.New(errors.CodeInternalError, "Token mismatch")
+	}
+
+	// 删除锁
+	return mc.Delete(ctx, lockKey)
+}
+
+// TryLock 尝试获取分布式锁
+func (mc *MemoryCache) TryLock(ctx context.Context, key string, ttl time.Duration, waitTime time.Duration) (string, error) {
+	start := time.Now()
+	for time.Since(start) < waitTime {
+		token, err := mc.Lock(ctx, key, ttl)
+		if err == nil {
+			return token, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return "", errors.New(errors.CodeInternalError, "Timeout acquiring lock")
+}
+
+// GetBit 获取位值
+func (mc *MemoryCache) GetBit(ctx context.Context, key string, offset int64) (int64, error) {
+	// 简化实现：对于内存缓存，位操作不常用
+	return 0, errors.New(errors.CodeInternalError, "Bit operations not supported in memory cache")
+}
+
+// SetBit 设置位值
+func (mc *MemoryCache) SetBit(ctx context.Context, key string, offset int64, value int) error {
+	return errors.New(errors.CodeInternalError, "Bit operations not supported in memory cache")
+}
 
 // Clear 清空缓存
 func (mc *MemoryCache) Clear(ctx context.Context) error {
@@ -375,9 +967,25 @@ func (mc *MemoryCache) Clear(ctx context.Context) error {
 	return nil
 }
 
+// Stats 返回统计信息
+func (mc *MemoryCache) Stats() CacheStats {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+
+	stats := *mc.stats
+	stats.MemoryUsage = mc.memoryUsage
+	return stats
+}
+
 // Close 关闭内存缓存
 func (mc *MemoryCache) Close() error {
 	mc.stopCleanup <- true
+	return nil
+}
+
+// Ping 实现Ping方法
+func (mc *MemoryCache) Ping(ctx context.Context) error {
+	// 内存缓存总是可用的
 	return nil
 }
 

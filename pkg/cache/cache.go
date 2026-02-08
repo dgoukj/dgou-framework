@@ -6,6 +6,7 @@ import (
 	"dgou/pkg/errors"
 	"dgou/pkg/logger"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -84,10 +85,17 @@ type Cache interface {
 	Unlock(ctx context.Context, key, token string) error
 	TryLock(ctx context.Context, key string, ttl time.Duration, waitTime time.Duration) (string, error)
 
+	// 位操作
+	GetBit(ctx context.Context, key string, offset int64) (int64, error)
+	SetBit(ctx context.Context, key string, offset int64, value int) error
+
 	// 管理操作
 	Clear(ctx context.Context) error
 	Stats() CacheStats
 	Close() error
+
+	// 添加 Ping 方法
+	Ping(ctx context.Context) error
 }
 
 // BloomFilter 布隆过滤器接口
@@ -300,7 +308,8 @@ func (cm *CacheManager) Get(ctx context.Context, key string) (string, error) {
 
 	value, err := cache.Get(ctx, key)
 	if err != nil {
-		if errors.Is(err, errors.CodeResourceNotFound) {
+		// 检查是否是"未找到"错误
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "Key not found") {
 			cm.updateStats(false)
 
 			// 缓存穿透防护：缓存空值
@@ -310,7 +319,6 @@ func (cm *CacheManager) Get(ctx context.Context, key string) (string, error) {
 			// 设置空值，防止缓存穿透
 			_ = cache.Set(ctx, key, "", 30*time.Second)
 		}
-		return "", err
 	}
 
 	cm.updateStats(true)
@@ -554,10 +562,7 @@ func (cm *CacheManager) Stats() CacheStats {
 
 	stats := *cm.stats
 
-	// 获取内存使用情况
-	if memoryCache, ok := cm.secondary.(*MemoryCache); ok {
-		stats.MemoryUsage = memoryCache.memoryUsage
-	}
+	stats.MemoryUsage = cm.secondary.Stats().MemoryUsage
 
 	return stats
 }
@@ -613,4 +618,31 @@ func (cm *CacheManager) DisableFallback() {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	cm.fallback = false
+}
+
+// ==================== 哈希函数 ====================
+
+// hash1 哈希函数1
+func hash1(value string) int64 {
+	// 简单哈希函数，实际项目中应使用更好的哈希算法
+	var hash int64 = 5381
+	for i := 0; i < len(value); i++ {
+		hash = ((hash << 5) + hash) + int64(value[i])
+	}
+	return hash % (1 << 32)
+}
+
+// hash2 哈希函数2
+func hash2(value string) int64 {
+	// 另一个哈希函数
+	var hash int64 = 0
+	for i := 0; i < len(value); i++ {
+		hash = (hash * 31) + int64(value[i])
+	}
+	return hash % (1 << 32)
+}
+
+// generateLockToken 生成分布式锁令牌
+func generateLockToken() string {
+	return fmt.Sprintf("lock:%d:%d", time.Now().UnixNano(), time.Now().Unix())
 }
