@@ -128,16 +128,6 @@ type LogConfig struct {
 	AddCaller  bool   `mapstructure:"add_caller"`
 }
 
-// MonitorConfig 监控配置
-type MonitorConfig struct {
-	EnableMetrics   bool   `mapstructure:"enable_metrics"`
-	MetricsPath     string `mapstructure:"metrics_path"`
-	EnableHealth    bool   `mapstructure:"enable_health"`
-	HealthPath      string `mapstructure:"health_path"`
-	EnableProfiling bool   `mapstructure:"enable_profiling"`
-	ProfilePath     string `mapstructure:"profile_path"`
-}
-
 // SecurityConfig 安全配置
 type SecurityConfig struct {
 	EnableRateLimit bool     `mapstructure:"enable_rate_limit"`
