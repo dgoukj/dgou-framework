@@ -36,8 +36,8 @@ type AuditModel struct {
 	UpdatedBy uint `gorm:"index;not null;default:0" json:"updated_by"`
 }
 
-// SoftDelete 软删除接口
-type SoftDelete interface {
+// SoftDeleteInterface 软删除接口（重命名避免冲突）
+type SoftDeleteInterface interface {
 	GetDeletedAt() gorm.DeletedAt
 	SetDeletedAt(time.Time)
 }

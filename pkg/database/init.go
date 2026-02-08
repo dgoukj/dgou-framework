@@ -1,3 +1,4 @@
+// pkg/database/init.go
 package database
 
 import (
@@ -12,6 +13,8 @@ import (
 var (
 	// globalDB 全局数据库实例
 	globalDB *Database
+	// globalTools 全局数据库工具实例
+	globalTools *DatabaseTools
 	// once 确保单例初始化
 	once sync.Once
 )
@@ -28,9 +31,8 @@ func InitDB(cfg *config.Config) (*Database, error) {
 		}
 		globalDB = db
 
-		// 注册优雅关闭
-		// 这里需要与应用的优雅关闭机制集成
-		// 暂时省略，实际使用时需要添加
+		// 初始化全局工具实例
+		globalTools = NewDatabaseTools(db.GetMaster())
 
 		logger.Info("Database initialized successfully")
 	})
@@ -53,6 +55,18 @@ func GetDB() *Database {
 		return db
 	}
 	return globalDB
+}
+
+// GetTools 获取全局数据库工具实例
+func GetTools() *DatabaseTools {
+	if globalTools == nil {
+		logger.Error("Database tools not initialized, please call InitDB first")
+		// 尝试初始化数据库
+		if GetDB() != nil {
+			globalTools = NewDatabaseTools(GetDB().GetMaster())
+		}
+	}
+	return globalTools
 }
 
 // Master 获取主库实例（快捷方式）
@@ -89,6 +103,15 @@ func Transaction(fn func(tx *gorm.DB) error) error {
 		return errors.New(errors.CodeInternalError, "Database not initialized")
 	}
 	return db.Transaction(fn)
+}
+
+// TransactionWithContext 带上下文的执行
+func TransactionWithContext(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	db := GetDB()
+	if db == nil {
+		return errors.New(errors.CodeInternalError, "Database not initialized")
+	}
+	return db.TransactionWithContext(ctx, fn)
 }
 
 // CloseDB 关闭数据库连接（用于优雅关闭）
