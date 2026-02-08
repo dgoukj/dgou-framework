@@ -140,6 +140,18 @@ type SecurityConfig struct {
 	EnableHSTS      bool     `mapstructure:"enable_hsts"`
 }
 
+// 限流配置
+type RateLimitConfig struct {
+	EnableIPLimit    bool   `yaml:"enable_ip_limit" json:"enable_ip_limit"`
+	EnableTokenLimit bool   `yaml:"enable_token_limit" json:"enable_token_limit"`
+	Limit            int    `yaml:"limit" json:"limit"`
+	WindowSeconds    int    `yaml:"window_seconds" json:"window_seconds"`
+	RedisAddr        string `yaml:"redis_addr" json:"redis_addr"`
+	RedisPassword    string `yaml:"redis_password" json:"redis_password"`
+	RedisDB          int    `yaml:"redis_db" json:"redis_db"`
+	FailOpen         bool   `yaml:"fail_open" json:"fail_open"` // Redis故障时是否允许请求通过
+}
+
 // LoadConfig 加载配置（线程安全单例模式）
 func LoadConfig(configPath ...string) *Config {
 	configOnce.Do(func() {

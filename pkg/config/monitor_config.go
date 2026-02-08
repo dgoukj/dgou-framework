@@ -3,58 +3,37 @@ package config
 
 // MonitorConfig 监控配置
 type MonitorConfig struct {
-	// 基础配置
-	ServiceName    string `mapstructure:"service_name" yaml:"service_name"`
-	ServiceVersion string `mapstructure:"service_version" yaml:"service_version"`
-	Environment    string `mapstructure:"environment" yaml:"environment"`
-
-	// Prometheus配置
-	EnableMetrics bool   `mapstructure:"enable_metrics" yaml:"enable_metrics"`
-	MetricsPath   string `mapstructure:"metrics_path" yaml:"metrics_path"`
-
-	// 健康检查配置
-	EnableHealth bool   `mapstructure:"enable_health" yaml:"enable_health"`
-	HealthPath   string `mapstructure:"health_path" yaml:"health_path"`
-
-	// 性能分析配置
-	EnableProfiling bool   `mapstructure:"enable_profiling" yaml:"enable_profiling"`
-	ProfilePath     string `mapstructure:"profile_path" yaml:"profile_path"`
-
-	// 分布式追踪配置
-	EnableTracing     bool    `mapstructure:"enable_tracing" yaml:"enable_tracing"`
-	JaegerEndpoint    string  `mapstructure:"jaeger_endpoint" yaml:"jaeger_endpoint"`
-	TraceSamplingRate float64 `mapstructure:"trace_sampling_rate" yaml:"trace_sampling_rate"`
-
-	// 告警配置
-	EnableAlerts bool   `mapstructure:"enable_alerts" yaml:"enable_alerts"`
-	AlertRules   string `mapstructure:"alert_rules" yaml:"alert_rules"`
-
-	// 性能阈值配置
-	PerformanceThresholds struct {
-		MaxRequestDuration float64 `mapstructure:"max_request_duration" yaml:"max_request_duration"`
-		MaxMemoryUsage     float64 `mapstructure:"max_memory_usage" yaml:"max_memory_usage"`
-		MaxDBQueryDuration float64 `mapstructure:"max_db_query_duration" yaml:"max_db_query_duration"`
-		MaxGoroutines      int     `mapstructure:"max_goroutines" yaml:"max_goroutines"`
-		ErrorRateThreshold float64 `mapstructure:"error_rate_threshold" yaml:"error_rate_threshold"`
-	} `mapstructure:"performance_thresholds" yaml:"performance_thresholds"`
+	EnableMetrics     bool    `mapstructure:"enable_metrics"`      // 是否启用指标监控
+	MetricsPath       string  `mapstructure:"metrics_path"`        // 指标路径
+	EnableHealth      bool    `mapstructure:"enable_health"`       // 是否启用健康检查
+	HealthPath        string  `mapstructure:"health_path"`         // 健康检查路径
+	EnableProfiling   bool    `mapstructure:"enable_profiling"`    // 是否启用性能分析
+	ProfilePath       string  `mapstructure:"profile_path"`        // 性能分析路径
+	ServiceName       string  `mapstructure:"service_name"`        // 服务名称
+	ServiceVersion    string  `mapstructure:"service_version"`     // 服务版本
+	Environment       string  `mapstructure:"environment"`         // 环境
+	EnableTracing     bool    `mapstructure:"enable_tracing"`      // 是否启用分布式追踪
+	JaegerEndpoint    string  `mapstructure:"jaeger_endpoint"`     // Jaeger端点
+	TraceSamplingRate float64 `mapstructure:"trace_sampling_rate"` // 追踪采样率
+	EnableAlerts      bool    `mapstructure:"enable_alerts"`       // 是否启用告警
+	AlertWebhookURL   string  `mapstructure:"alert_webhook_url"`   // 告警Webhook URL
 }
 
 // DefaultMonitorConfig 默认监控配置
 func DefaultMonitorConfig() *MonitorConfig {
 	return &MonitorConfig{
-		ServiceName:       "dgou-app",
-		ServiceVersion:    "1.0.0",
-		Environment:       "production",
 		EnableMetrics:     true,
 		MetricsPath:       "/metrics",
 		EnableHealth:      true,
 		HealthPath:        "/health",
 		EnableProfiling:   false,
 		ProfilePath:       "/debug/pprof",
+		ServiceName:       "dgou-app",
+		ServiceVersion:    "1.0.0",
+		Environment:       "development",
 		EnableTracing:     false,
 		JaegerEndpoint:    "http://localhost:14268/api/traces",
 		TraceSamplingRate: 0.1,
-		EnableAlerts:      true,
-		AlertRules:        "./config/alert_rules.yaml",
+		EnableAlerts:      false,
 	}
 }

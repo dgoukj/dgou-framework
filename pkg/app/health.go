@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"dgou/pkg/cache"
-	"dgou/pkg/database"
 	"dgou/pkg/logger"
 	"net/http"
 	"sync"
@@ -14,6 +12,7 @@ import (
 
 // HealthChecker 健康检查器
 type HealthChecker struct {
+	app    *App // 应用实例
 	checks []HealthCheck
 	mu     sync.RWMutex
 }
@@ -32,14 +31,15 @@ type HealthStatus struct {
 }
 
 // NewHealthChecker 创建健康检查器
-func NewHealthChecker() *HealthChecker {
+func NewHealthChecker(app *App) *HealthChecker {
 	hc := &HealthChecker{
+		app:    app,
 		checks: make([]HealthCheck, 0),
 	}
 
 	// 注册默认检查项
-	hc.Register(&DatabaseCheck{})
-	hc.Register(&CacheCheck{})
+	hc.Register(&DatabaseCheck{app: app})
+	hc.Register(&CacheCheck{app: app})
 
 	return hc
 }
@@ -88,8 +88,8 @@ func (hc *HealthChecker) ReadyHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 检查核心依赖是否就绪
 		checks := []HealthCheck{
-			&DatabaseCheck{},
-			&CacheCheck{},
+			&DatabaseCheck{app: hc.app},
+			&CacheCheck{app: hc.app},
 		}
 
 		ready := true
@@ -153,43 +153,43 @@ func (hc *HealthChecker) checkAll() map[string]HealthStatus {
 // ==================== 具体检查实现 ====================
 
 // DatabaseCheck 数据库检查
-type DatabaseCheck struct{}
+type DatabaseCheck struct {
+	app *App
+}
 
 func (d *DatabaseCheck) Name() string {
 	return "database"
 }
 
 func (d *DatabaseCheck) Check() HealthStatus {
-	db := database.GetDB()
-	if db == nil {
+	if d.app == nil || d.app.db == nil {
 		return HealthStatus{
 			Status:  "unhealthy",
 			Message: "Database not initialized",
 		}
 	}
 
-	sqlDB, err := db.DB()
-	if err != nil {
+	// 检查数据库连接
+	if !d.app.db.IsConnected() {
 		return HealthStatus{
 			Status:  "unhealthy",
-			Message: err.Error(),
+			Message: "Database connection lost",
 		}
 	}
 
-	if err := sqlDB.Ping(); err != nil {
-		logger.Error("Database health check failed", logger.ErrorField(err))
-		return HealthStatus{
-			Status:  "unhealthy",
-			Message: err.Error(),
-		}
-	}
-
-	// 检查连接数
-	stats := sqlDB.Stats()
-	if stats.OpenConnections > int(float64(stats.MaxOpenConnections)*0.9) {
-		return HealthStatus{
-			Status:  "degraded",
-			Message: "Database connections are running high",
+	// 获取数据库连接池统计
+	stats := d.app.db.GetStats()
+	if masterStats, ok := stats["master"].(map[string]interface{}); ok {
+		// 检查连接数是否过高
+		if openConns, ok := masterStats["open_connections"].(int); ok {
+			if maxOpenConns, ok := masterStats["max_open_conns"].(int); ok {
+				if maxOpenConns > 0 && float64(openConns)/float64(maxOpenConns) > 0.9 {
+					return HealthStatus{
+						Status:  "degraded",
+						Message: "Database connections are running high",
+					}
+				}
+			}
 		}
 	}
 
@@ -199,18 +199,27 @@ func (d *DatabaseCheck) Check() HealthStatus {
 }
 
 // CacheCheck 缓存检查
-type CacheCheck struct{}
+type CacheCheck struct {
+	app *App
+}
 
 func (c *CacheCheck) Name() string {
 	return "cache"
 }
 
 func (c *CacheCheck) Check() HealthStatus {
-	client := cache.GetClient()
-	if client == nil {
+	if c.app == nil || c.app.cacheMgr == nil {
 		return HealthStatus{
 			Status:  "degraded",
-			Message: "Cache not available, using memory cache",
+			Message: "Cache not initialized, using fallback mode",
+		}
+	}
+
+	// 检查Redis是否可用
+	if !c.app.cacheMgr.IsRedisAvailable() {
+		return HealthStatus{
+			Status:  "degraded",
+			Message: "Redis not available, using memory cache",
 		}
 	}
 
@@ -218,7 +227,7 @@ func (c *CacheCheck) Check() HealthStatus {
 	defer cancel()
 
 	start := time.Now()
-	if err := client.Ping(ctx).Err(); err != nil {
+	if err := c.app.cacheMgr.Ping(ctx); err != nil {
 		logger.Error("Cache health check failed", logger.ErrorField(err))
 		return HealthStatus{
 			Status:  "degraded",

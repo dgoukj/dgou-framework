@@ -23,13 +23,16 @@ import (
 
 // App 应用结构体
 type App struct {
-	config     *config.Config   // 配置
-	engine     *gin.Engine      // Gin引擎
-	httpServer *http.Server     // HTTP服务器
-	shutdown   *ShutdownHandler // 优雅关闭处理器
-	routers    []Router         // 路由注册器
-	health     *HealthChecker   // 健康检查器
-	monitors   []Monitor        // 监控器
+	config     *config.Config      // 配置
+	engine     *gin.Engine         // Gin引擎
+	httpServer *http.Server        // HTTP服务器
+	shutdown   *ShutdownHandler    // 优雅关闭处理器
+	routers    []Router            // 路由注册器
+	health     *HealthChecker      // 健康检查器
+	monitors   []Monitor           // 监控器
+	db         *database.Database  // 数据库实例
+	cacheMgr   *cache.CacheManager // 缓存管理器
+	monitor    *monitor.Monitor    // 监控实例
 }
 
 // Router 路由接口
@@ -63,7 +66,7 @@ func NewApp(cfg *config.Config) *App {
 	}
 
 	// 初始化健康检查器
-	app.health = NewHealthChecker()
+	app.health = NewHealthChecker(app)
 
 	return app
 }
@@ -86,21 +89,25 @@ func (app *App) Initialize() error {
 	logger.InitLogger(&app.config.Log)
 
 	// 初始化数据库
-	if err := database.InitDB(&app.config.MySQL); err != nil {
+	db, err := database.InitDB(app.config)
+	if err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
-	app.shutdown.Register(func() {
+	app.db = db
+	app.shutdown.RegisterWithDefault(func() {
 		database.CloseDB()
-	})
+	}, "database")
 
 	// 初始化缓存
-	if err := cache.InitCache(&app.config.Redis); err != nil {
+	cacheMgr, err := cache.InitCache(app.config)
+	if err != nil {
 		logger.Error("Failed to initialize cache", logger.ErrorField(err))
 		// 缓存初始化失败不影响应用启动
 	} else {
-		app.shutdown.Register(func() {
-			cache.Close()
-		})
+		app.cacheMgr = cacheMgr
+		app.shutdown.RegisterWithDefault(func() {
+			cache.CloseCache()
+		}, "cache")
 	}
 
 	// 设置中间件
@@ -137,7 +144,11 @@ func (app *App) setupMiddleware() {
 
 	// 限流中间件
 	if app.config.Security.EnableRateLimit {
-		app.engine.Use(middleware.RateLimiter(app.config.Security.RateLimit))
+		limit := app.config.Security.RateLimit
+		if limit <= 0 {
+			limit = 100 // 默认值
+		}
+		app.engine.Use(middleware.RateLimiter(limit))
 	}
 
 	// Gzip压缩中间件
@@ -150,32 +161,40 @@ func (app *App) setupMiddleware() {
 
 	// 错误处理中间件
 	app.engine.Use(middleware.ErrorHandler())
+
+	// 监控中间件（如果已初始化监控）
+	if app.monitor != nil {
+		app.engine.Use(app.monitor.Middleware())
+	}
 }
 
 // setupMonitorRoutes 设置监控路由
 func (app *App) setupMonitorRoutes() {
-	cfg := app.config.Monitor
+	cfg := &app.config.Monitor
 
-	// 健康检查路由
+	// 初始化监控
+	if cfg.EnableMetrics || cfg.EnableHealth || cfg.EnableProfiling {
+		var err error
+		app.monitor, err = monitor.InitMonitor(cfg, app.engine)
+		if err != nil {
+			logger.Error("Failed to initialize monitor", logger.ErrorField(err))
+		} else {
+			// 将监控器添加到monitors列表中以便优雅关闭
+			app.monitors = append(app.monitors, &monitorWrapper{
+				monitor: app.monitor,
+			})
+		}
+	}
+
+	// 健康检查路由（使用我们的健康检查器，而不是监控组件的）
 	if cfg.EnableHealth {
 		app.engine.GET(cfg.HealthPath, app.health.Handler())
 		app.engine.GET("/ready", app.health.ReadyHandler())
 		app.engine.GET("/live", app.health.LiveHandler())
 	}
 
-	// Metrics路由
-	if cfg.EnableMetrics {
-		metrics := monitor.NewMetrics()
-		app.engine.GET(cfg.MetricsPath, metrics.Handler())
-		app.engine.Use(metrics.Middleware())
-		app.monitors = append(app.monitors, metrics)
-	}
-
-	// Profiling路由（仅开发环境）
-	if cfg.EnableProfiling && gin.Mode() == gin.DebugMode {
-		app.engine.GET(cfg.ProfilePath+"/", gin.WrapH(http.DefaultServeMux))
-		app.engine.GET(cfg.ProfilePath+"/:cmd", gin.WrapH(http.DefaultServeMux))
-	}
+	// 注意：Metrics路由和Profiling路由现在由监控组件自己处理
+	// 在monitor.Start()中会注册这些路由
 }
 
 // setupRoutes 设置业务路由
@@ -322,7 +341,38 @@ func (app *App) GetHealthChecker() *HealthChecker {
 	return app.health
 }
 
+// GetDatabase 获取数据库实例
+func (app *App) GetDatabase() *database.Database {
+	return app.db
+}
+
+// GetCacheManager 获取缓存管理器
+func (app *App) GetCacheManager() *cache.CacheManager {
+	return app.cacheMgr
+}
+
 // RegisterStatic 注册静态文件路由
 func (app *App) RegisterStatic(relativePath string, fs embed.FS) {
 	app.engine.StaticFS(relativePath, http.FS(fs))
+}
+
+// monitorWrapper 包装器，使monitor.Monitor实现Monitor接口
+type monitorWrapper struct {
+	monitor *monitor.Monitor
+}
+
+func (mw *monitorWrapper) Start() error {
+	// monitor已经在InitMonitor时启动了
+	return nil
+}
+
+func (mw *monitorWrapper) Stop() error {
+	if mw.monitor != nil {
+		return mw.monitor.Stop()
+	}
+	return nil
+}
+
+func (mw *monitorWrapper) Name() string {
+	return "monitor"
 }
