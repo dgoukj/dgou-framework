@@ -259,13 +259,13 @@ func (m *Monitor) initMetrics() error {
 		},
 	)
 
-	// 数据库指标
+	// 数据库指标 - 修复：dbQueriesTotal 改为4个标签，包括status
 	m.metrics.dbQueriesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "db_queries_total",
 			Help: "Total number of database queries",
 		},
-		[]string{"type", "table", "operation"},
+		[]string{"type", "table", "operation", "status"},
 	)
 
 	m.metrics.dbQueryDuration = prometheus.NewHistogramVec(
@@ -991,8 +991,6 @@ func (am *AlertManager) processAlerts() {
 type LoggingAlertHandler struct{}
 
 func (h *LoggingAlertHandler) Handle(ctx context.Context, alert Alert) error {
-	// 注意：logger.Log 函数不存在，需要使用适当的日志级别函数
-	//logLevel := "info"
 	switch alert.Rule.Severity {
 	case "critical":
 		logger.Error("Alert triggered",
