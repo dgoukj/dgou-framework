@@ -734,7 +734,6 @@ monitor:
 ### 6. 数据库组件 (pkg/database)
 ### 特性
 - ✅ GORM v2 集成
-- ✅ GORM v2 集成
 - ✅ MySQL8 完整支持
 - ✅ 读写分离与负载均衡
 - ✅ 连接池优化配置
@@ -742,6 +741,7 @@ monitor:
 - ✅ 事务管理与回滚
 - ✅ 数据迁移支持
 - ✅ 健康检查与自动重连
+- ✅ 高级工具类支持
 
 ### 快速开始
 
@@ -778,26 +778,29 @@ mysql:
 
 ```go
 import (
-  "dgou/pkg/config"
-  "dgou/pkg/database"
+"dgou/pkg/config"
+"dgou/pkg/database"
 )
 
 func main() {
-  // 加载配置
-  cfg := config.LoadConfig()
-
-  // 初始化数据库
-  db, err := database.InitDB(cfg)
-  if err != nil {
-    log.Fatal(err)
-  }
-  defer db.Close()
-
-  // 获取主库实例（写操作）
-  master := db.GetMaster()
-
-  // 获取从库实例（读操作）
-  slave := db.GetSlave()
+    // 加载配置
+    cfg := config.LoadConfig()
+    
+    // 初始化数据库
+    db, err := database.InitDB(cfg)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
+    
+    // 获取主库实例（写操作）
+    master := db.GetMaster()
+    
+    // 获取从库实例（读操作）
+    slave := db.GetSlave()
+    
+    // 获取数据库工具实例
+    tools := database.GetTools()
 }
 ```
 
@@ -807,24 +810,24 @@ func main() {
 package models
 
 import (
-  "dgou/pkg/database"
-  "time"
+	"dgou/pkg/database"
+	"time"
 )
 
 type User struct {
-  database.BaseModel
-  Username string `gorm:"size:50;uniqueIndex;not null"`
-  Email    string `gorm:"size:100;uniqueIndex;not null"`
-  Password string `gorm:"size:255;not null"`
-  Status   int    `gorm:"default:1"`
+	database.BaseModel
+	Username string `gorm:"size:50;uniqueIndex;not null"`
+	Email    string `gorm:"size:100;uniqueIndex;not null"`
+	Password string `gorm:"size:255;not null"`
+	Status   int    `gorm:"default:1"`
 }
 
 type Product struct {
-  database.BaseModel
-  Name        string  `gorm:"size:100;not null"`
-  Price       float64 `gorm:"not null"`
-  Description string  `gorm:"type:text"`
-  CategoryID  uint    `gorm:"index"`
+	database.BaseModel
+	Name        string  `gorm:"size:100;not null"`
+	Price       float64 `gorm:"not null"`
+	Description string  `gorm:"type:text"`
+	CategoryID  uint    `gorm:"index"`
 }
 ```
 
@@ -833,9 +836,9 @@ type Product struct {
 ```go
 // 创建记录
 user := &models.User{
-  Username: "john_doe",
-  Email:    "john@example.com",
-  Password: "hashed_password",
+    Username: "john_doe",
+    Email:    "john@example.com",
+    Password: "hashed_password",
 }
 result := db.Create(user)
 
@@ -880,7 +883,272 @@ err := database.TransactionWithContext(ctx, func(tx *gorm.DB) error {
   return processBusinessLogic(tx)
 })
 ```
+#### 数据库工具类 (DatabaseTools)
+`DatabaseTools` 提供了一系列高级数据库操作工具，简化常见数据库操作。
+##### 获取工具实例
+```go
+// 方式1：获取全局工具实例（推荐）
+tools := database.GetTools()
 
+// 方式2：从现有数据库连接创建工具实例
+db := database.GetDB()
+tools := database.NewDatabaseTools(db.GetMaster())
+
+// 方式3：使用特定数据库连接
+tools := database.NewDatabaseTools(customDB)
+```
+##### 分页查询
+```go
+// 基本分页查询
+var users []models.User
+result, err := tools.Paginate(&database.Pagination{
+  Page:     1,
+  PageSize: 20,
+}, &users)
+
+// 带选项的分页查询
+result, err := tools.PaginateWithOptions(&database.Pagination{
+  Page:     1,
+  PageSize: 20,
+}, &users, &database.QueryOptions{
+  Where: map[string]interface{}{
+    "status": 1,
+    "age":    []interface{}{18, 25}, // IN 查询
+  },
+  Order:   []string{"created_at DESC"},
+  Preload: []string{"Profile", "Orders"},
+  ForUpdate: false,
+  Timeout:   5 * time.Second,
+})
+
+// 分页结果使用
+fmt.Printf("第 %d 页，共 %d 条，总记录数 %d，总页数 %d\n",
+  result.Page, result.PageSize, result.Total, result.TotalPage)
+```
+##### 批量操作
+```go
+// 批量插入
+users := []models.User{
+  {Username: "user1", Email: "user1@example.com"},
+  {Username: "user2", Email: "user2@example.com"},
+  // ...
+}
+
+err := tools.BatchInsert(users, &database.BatchOptions{
+  BatchSize:   100,
+  EnableRetry: true,
+  MaxRetries:  3,
+  Timeout:     10 * time.Second,
+})
+
+// 批量插入或更新（upsert）
+products := []models.Product{
+  {ID: 1, Name: "Product A", Price: 100},
+  {ID: 2, Name: "Product B", Price: 200},
+}
+
+err := tools.BulkUpsert(products,
+  []string{"id"},           // 冲突列
+  []string{"name", "price"} // 更新列
+)
+```
+##### 查询操作
+```go
+// 根据ID查找
+var user models.User
+err := tools.FindByID(&user, 123)
+
+// 根据条件查找
+err := tools.FindByCondition(&user, "email = ?", "john@example.com")
+
+// 检查记录是否存在
+exists, err := tools.Exists(&models.User{}, "email = ?", "test@example.com")
+
+// 统计数量
+count, err := tools.CountByCondition(&models.User{}, "status = ? AND age > ?", 1, 18)
+
+// 查找或创建
+user := models.User{Email: "new@example.com"}
+err := tools.FirstOrCreate(&user, map[string]interface{}{"email": "new@example.com"})
+
+// 分批查询
+err := tools.FindInBatches(&users, 100, func(tx *gorm.DB, batch int) error {
+  // 处理每批数据
+  for _, user := range users {
+    processUser(user)
+  }
+  return nil
+})
+```
+##### 更新操作
+```go
+// 更新指定列
+err := tools.UpdateColumns(&models.User{}, 123, map[string]interface{}{
+  "status": 0,
+  "name":   "新名称",
+})
+
+// 根据条件更新
+err := tools.UpdateByCondition(&models.User{},
+  map[string]interface{}{"status": 0},
+  "last_login < ?", time.Now().AddDate(0, -6, 0))
+```
+##### 删除操作
+```go
+// 软删除
+err := tools.SoftDeleteRecord(&models.User{}, 123)
+err := tools.SoftDeleteByCondition(&models.User{}, "created_at < ?", time.Now().AddDate(0, -1, 0))
+
+// 硬删除
+err := tools.HardDelete(&models.User{}, 123)
+err := tools.HardDeleteByCondition(&models.User{}, "created_at < ?", time.Now().AddDate(0, -1, 0))
+```
+##### 事务操作
+```go
+// 执行事务
+err := tools.ExecuteTransaction(func(tx *gorm.DB) error {
+  // 执行多个操作
+  if err := tx.Create(&order).Error; err != nil {
+    return err
+  }
+  
+  if err := tx.Create(&payment).Error; err != nil {
+    return err
+  }
+  
+  return nil
+}, &sql.TxOptions{Isolation: sql.LevelSerializable})
+
+// 带重试的事务（自动处理死锁）
+err := tools.ExecuteTransactionWithRetry(func(tx *gorm.DB) error {
+  // 执行多个操作
+  return processBusinessLogic(tx)
+}, 3) // 最大重试3次
+
+// 带超时的查询
+err := tools.QueryWithTimeout(5*time.Second, func(db *gorm.DB) error {
+  return db.Find(&users).Error
+})
+```
+##### 锁操作
+```go
+// 锁定记录用于更新
+var user models.User
+err := tools.LockForUpdate().First(&user, 123).Error
+
+// 锁定记录用于共享读取
+var users []models.User
+err := tools.LockForShare().Where("status = ?", 1).Find(&users).Error
+```
+##### 表维护操作
+```go
+// 获取表大小
+size, err := tools.GetTableSize("users")
+fmt.Printf("表大小: %d bytes\n", size)
+
+// 优化表
+err := tools.OptimizeTable("users")
+
+// 解释查询计划
+plan, err := tools.ExplainQuery("SELECT * FROM users WHERE age > ?", 18)
+fmt.Println(plan)
+
+// 清空表
+err := tools.TruncateTable("users")
+```
+##### 索引管理
+```go
+// 创建索引
+err := tools.CreateIndex("users", &database.IndexOptions{
+  Name:    "idx_email",
+  Columns: []string{"email"},
+  Unique:  true,
+  Comment: "用户邮箱索引",
+})
+
+// 删除索引
+err := tools.DropIndex("users", "idx_email")
+
+// 获取索引信息
+indexes, err := tools.GetIndexes("users")
+for _, idx := range indexes {
+  fmt.Printf("索引: %s, 列: %s, 唯一: %v\n",
+    idx["INDEX_NAME"], idx["COLUMN_NAME"], idx["NON_UNIQUE"])
+}
+```
+##### 列信息
+```go
+// 获取表列信息
+columns, err := tools.GetColumnInfo("users")
+for _, col := range columns {
+  fmt.Printf("列名: %s, 类型: %s, 可空: %s, 默认值: %s\n",
+    col["COLUMN_NAME"], col["DATA_TYPE"],
+    col["IS_NULLABLE"], col["COLUMN_DEFAULT"])
+}
+```
+##### 统计信息
+```go
+// 获取数据库连接池统计
+stats, err := tools.GetDBStats()
+fmt.Printf("连接池统计:\n")
+fmt.Printf("  最大连接数: %d\n", stats.MaxOpenConnections)
+fmt.Printf("  打开连接数: %d\n", stats.OpenConnections)
+fmt.Printf("  使用中连接: %d\n", stats.InUse)
+fmt.Printf("  空闲连接: %d\n", stats.Idle)
+
+// 获取查询统计
+queryStats, err := tools.GetQueryStats()
+fmt.Printf("查询统计: %+v\n", queryStats)
+```
+##### 快捷方法
+```go
+// 查找所有记录
+err := tools.FindAll(&users)
+
+// 根据ID列表查找
+err := tools.FindByIDs(&users, []interface{}{1, 2, 3, 4, 5})
+
+// 创建记录
+err := tools.CreateRecord(&user)
+
+// 批量创建记录
+err := tools.CreateRecords(&users)
+
+// 根据ID删除
+err := tools.DeleteByID(&models.User{}, 123)
+
+// 获取总记录数
+count, err := tools.GetTotalCount(&models.User{})
+
+// 获取最大/最小ID
+maxID, err := tools.GetMaxID(&models.User{})
+minID, err := tools.GetMinID(&models.User{})
+```
+##### 事务处理
+```go
+// 简单事务
+err := db.Transaction(func(tx *gorm.DB) error {
+  // 执行多个操作
+  if err := tx.Create(&order).Error; err != nil {
+    return err
+  }
+  
+  if err := tx.Create(&payment).Error; err != nil {
+    return err
+  }
+  
+  return nil
+})
+
+// 带上下文的事务
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+err := database.TransactionWithContext(ctx, func(tx *gorm.DB) error {
+  // 事务操作
+  return processBusinessLogic(tx)
+})
+```
 #### 数据迁移
 
 ```go
