@@ -22,6 +22,7 @@ Dgou Framework 是一个基于 Gin 构建的高性能、高安全性的 Go 语�
 │       └── main.go
 ├── config/                # 配置文件
 │   └── config.yaml
+├── examples/              # 示例
 ├── pkg/                   # 核心组件库
 │   ├── app/               # 应用核心
 │   ├── auth/              # 认证授权
@@ -127,10 +128,12 @@ go run cmd/server/main.go
 访问 http://localhost:8080/health 查看健康状态。
 
 ## 核心组件
+
 ### 1. 配置组件 (pkg/config)
 
 配置组件提供灵活、安全的配置管理，支持多种配置源和环境变量。
 #### 主要特性
+
 - ✅ 支持 YAML、JSON 配置文件
 - ✅ 环境变量覆盖
 - ✅ 配置热重载
@@ -139,7 +142,7 @@ go run cmd/server/main.go
 
 #### 使用方法
 
-#### 基础用法
+##### 基础用法
 ```go
 
 import "dgou/pkg/config"
@@ -156,14 +159,14 @@ func main() {
     fmt.Printf("Server running on port: %d\n", port)
 }
 ```
-#### 使用环境变量
-```bash
+##### 使用环境变量
 
+```bash
 # 设置环境变量（优先级高于配置文件）
 export APP_SERVER_PORT=9090
 export APP_MYSQL_HOST=mysql-prod.example.com
 ```
-#### 配置验证
+##### 配置验证
 
 配置加载时会自动验证：
 - 必填字段检查
@@ -171,7 +174,7 @@ export APP_MYSQL_HOST=mysql-prod.example.com
 - 证书文件存在性检查
 - 端口范围验证
 
-#### 配置热重载
+##### 配置热重载
 
 当配置文件发生变化时，配置会自动重新加载，无需重启服务：
 ```go
@@ -181,7 +184,7 @@ config.OnConfigChange(func(old, new *config.Config) {
     log.Printf("Configuration changed, new port: %d", new.Server.Port)
 })
 ```
-#### 配置结构
+##### 配置结构
 ```go
 
 type Config struct {
@@ -731,6 +734,7 @@ monitor:
 ### 6. 数据库组件 (pkg/database)
 ### 特性
 - ✅ GORM v2 集成
+- ✅ GORM v2 集成
 - ✅ MySQL8 完整支持
 - ✅ 读写分离与负载均衡
 - ✅ 连接池优化配置
@@ -741,37 +745,38 @@ monitor:
 
 ### 快速开始
 
-#### 6.1 基本配置
+#### 基本配置
 
 ```yaml
 # config/config.yaml
- mysql:
-   master:
-     host: localhost
-     port: 3306
-     user: root
-     password: password123
-     dbname: myapp
-     charset: utf8mb4
-     parse_time: true
-     loc: Local
-   slaves:
-     - host: slave1.localhost
-       port: 3306
-       user: root
-       password: password123
-       dbname: myapp
-   pool:
-     max_open_conns: 200
-     max_idle_conns: 50
-   log:
-     slow_threshold: 200
-     enable_logging: true
-     log_level: warn
+mysql:
+  master:
+    host: localhost
+    port: 3306
+    user: root
+    password: password123
+    dbname: myapp
+    charset: utf8mb4
+    parse_time: true
+    loc: Local
+  slaves:
+    - host: slave1.localhost
+      port: 3306
+      user: root
+      password: password123
+      dbname: myapp
+  pool:
+    max_open_conns: 200
+    max_idle_conns: 50
+  log:
+    slow_threshold: 200
+    enable_logging: true
+    log_level: warn
 ```
-#### 6.2 初始化数据库
-```go
 
+#### 初始化数据库
+
+```go
 import (
   "dgou/pkg/config"
   "dgou/pkg/database"
@@ -795,9 +800,10 @@ func main() {
   slave := db.GetSlave()
 }
 ```
-#### 6.3 定义模型
-```go
 
+#### 定义模型
+
+```go
 package models
 
 import (
@@ -813,94 +819,98 @@ type User struct {
   Status   int    `gorm:"default:1"`
 }
 
-type UserProfile struct {
+type Product struct {
   database.BaseModel
-  UserID   uint   `gorm:"uniqueIndex;not null"`
-  RealName string `gorm:"size:50"`
-  Avatar   string `gorm:"size:255"`
-  Phone    string `gorm:"size:20;index"`
+  Name        string  `gorm:"size:100;not null"`
+  Price       float64 `gorm:"not null"`
+  Description string  `gorm:"type:text"`
+  CategoryID  uint    `gorm:"index"`
 }
 ```
-#### 6.4 数据库操作示例
+
+#### 基本操作
+
 ```go
-
-// 查询操作
-func GetUserByID(id uint) (*User, error) {
-    var user User
-    // 使用从库进行读操作
-    err := database.Slave().First(&user, id).Error
-    if err != nil {
-        return nil, err
-    }
-    return &user, nil
+// 创建记录
+user := &models.User{
+  Username: "john_doe",
+  Email:    "john@example.com",
+  Password: "hashed_password",
 }
+result := db.Create(user)
 
-// 创建操作
-func CreateUser(user *User) error {
-    // 使用主库进行写操作
-    return database.Master().Create(user).Error
-}
+// 查询记录
+var users []models.User
+db.Where("status = ?", 1).Find(&users)
 
-// 更新操作
-func UpdateUser(user *User) error {
-    return database.Master().Save(user).Error
-}
+// 更新记录
+db.Model(&user).Update("status", 0)
 
-// 事务操作
-func TransferBalance(fromID, toID uint, amount float64) error {
-    return database.Transaction(func(tx *gorm.DB) error {
-    // 扣减转出账户余额
-    if err := tx.Model(&Account{}).
-    Where("id = ? AND balance >= ?", fromID, amount).
-    Update("balance", gorm.Expr("balance - ?", amount)).
-    Error; err != nil {
-        return err
-    }
-    
-    // 增加转入账户余额
-    if err := tx.Model(&Account{}).
-    Where("id = ?", toID).
-    Update("balance", gorm.Expr("balance + ?", amount)).
-    Error; err != nil {
-        return err
-    }
-    
-	return nil
-    })
-}
+// 删除记录
+db.Delete(&user)
 
-// 分页查询
-func ListUsers(page, pageSize int) ([]User, *database.PaginationResult, error) {
-    var users []User
-    pagination := &database.Pagination{
-        Page:     page,
-        PageSize: pageSize,
-    }
-    
-    db := database.Slave().Model(&User{}).Order("created_at DESC")
-    result, err := database.Paginate(db, pagination, &users)
-    
-    return users, result, err
-}
+// 预加载关联
+var userWithOrders models.User
+db.Preload("Orders").First(&userWithOrders, userID)
 ```
-#### 6.5 数据迁移
-```bash
 
-  # 创建新的迁移
-  go run cmd/db/main.go --command create --name add_user_role
+#### 事务处理
 
-  # 执行迁移
-  go run cmd/db/main.go --command migrate
-
-  # 查看迁移状态
-  go run cmd/db/main.go --command status
-
-  # 回滚迁移
-  go run cmd/db/main.go --command rollback --steps 1
-```
-#### 6.6 监控与统计
 ```go
+// 简单事务
+err := db.Transaction(func(tx *gorm.DB) error {
+  // 执行多个操作
+  if err := tx.Create(&order).Error; err != nil {
+    return err
+  }
+  
+  if err := tx.Create(&payment).Error; err != nil {
+    return err
+  }
+  
+  return nil
+})
 
+// 带上下文的事务
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+err := database.TransactionWithContext(ctx, func(tx *gorm.DB) error {
+  // 事务操作
+  return processBusinessLogic(tx)
+})
+```
+
+#### 数据迁移
+
+```go
+// 自动迁移
+db.AutoMigrate(&models.User{}, &models.Product{})
+
+// 自定义迁移
+type Migration struct {
+  ID        uint      `gorm:"primaryKey"`
+  Name      string    `gorm:"uniqueIndex"`
+  AppliedAt time.Time `gorm:"autoCreateTime"`
+}
+
+// 执行迁移
+func runMigrations(db *gorm.DB) error {
+  return db.Transaction(func(tx *gorm.DB) error {
+    // 创建迁移表
+    if err := tx.AutoMigrate(&Migration{}); err != nil {
+      return err
+    }
+    
+    // 执行具体迁移
+    return applyMigrations(tx)
+  })
+}
+```
+
+#### 监控与统计
+
+```go
 // 获取数据库连接池统计
 stats := db.GetStats()
 fmt.Printf("Connection pool stats: %+v\n", stats)
@@ -912,20 +922,22 @@ if db.IsConnected() {
 
 // 执行慢查询分析
 slowQueries := db.FindSlowQueries(5 * time.Second)
-````
-#### 高级特性
-#### 读写分离
-```go
+```
 
+#### 高级特性
+
+#### 读写分离
+
+```go
 // 自动读写分离
 func GetUserWithBalance(userID uint) (*User, error) {
   var user User
 
   // 读操作自动使用从库
   if err := database.Slave().
-  Preload("Accounts").
-  First(&user, userID).
-  Error; err != nil {
+    Preload("Accounts").
+    First(&user, userID).
+    Error; err != nil {
     return nil, err
   }
 
@@ -938,30 +950,32 @@ func GetUserForUpdate(userID uint) (*User, error) {
 
   // 使用主库并锁定记录
   if err := database.Master().
-	  Clauses(clause.Locking{Strength: "UPDATE"}).
-      First(&user, userID).
-      Error; err != nil {
-      return nil, err
-    }
+    Clauses(clause.Locking{Strength: "UPDATE"}).
+    First(&user, userID).
+    Error; err != nil {
+    return nil, err
+  }
 
   return &user, nil
 }
 ```
-#### 连接池优化
-```go
 
+#### 连接池优化
+
+```go
 // 获取连接池统计信息
 sqlDB, _ := db.GetMaster().DB()
 stats := sqlDB.Stats()
 
 fmt.Printf("连接池统计:\n")
-         fmt.Printf("  最大连接数: %d\n", stats.MaxOpenConnections)
-         fmt.Printf("  打开连接数: %d\n", stats.OpenConnections)
-         fmt.Printf("  使用中连接: %d\n", stats.InUse)
-         fmt.Printf("  空闲连接: %d\n", stats.Idle)
-         fmt.Printf("  等待次数: %d\n", stats.WaitCount)
+fmt.Printf("  最大连接数: %d\n", stats.MaxOpenConnections)
+fmt.Printf("  打开连接数: %d\n", stats.OpenConnections)
+fmt.Printf("  使用中连接: %d\n", stats.InUse)
+fmt.Printf("  空闲连接: %d\n", stats.Idle)
 ```
+
 #### 慢查询监控
+
 ```go
 
 // 启用慢查询日志
@@ -1013,21 +1027,25 @@ err := database.TransactionWithContext(ctx, func(tx *gorm.DB) error {
 })
 ```
 ### 7. 缓存组件 (pkg/cache)
-#### 特性
- - ✅ Redis客户端封装（支持连接池、健康检查）
- - ✅ 内存缓存降级（Redis不可用时自动降级）
- - ✅ 缓存穿透防护（布隆过滤器、空值缓存）
- - ✅ 缓存击穿防护（分布式锁、双检查锁）
- - ✅ 缓存雪崩防护（随机过期时间、熔断器）
- - ✅ 分布式锁实现（支持重入、自动续期）
- - ✅ 缓存一致性策略（写穿透、写回、双删）
- - ✅ 多种数据结构支持（字符串、哈希、集合、列表）
- - ✅ 发布订阅功能
- - ✅ 详细统计和监控
+
+缓存组件提供高性能的分布式缓存解决方案，支持Redis和内存缓存双重保障。
+
+#### 主要特性
+
+- ✅ Redis客户端封装（支持连接池、健康检查）
+- ✅ 内存缓存降级（Redis不可用时自动降级）
+- ✅ 缓存穿透防护（布隆过滤器、空值缓存）
+- ✅ 缓存击穿防护（分布式锁、双检查锁）
+- ✅ 缓存雪崩防护（随机过期时间、熔断器）
+- ✅ 分布式锁实现（支持重入、自动续期）
+- ✅ 缓存一致性策略（写穿透、写回、双删）
+- ✅ 多种数据结构支持（字符串、哈希、集合、列表）
+- ✅ 发布订阅功能
+- ✅ 详细统计和监控
 
 #### 快速开始
 
-#### 7.1 基本配置
+##### 基本配置
 ```yaml
 # config/config.yaml
          cache:
@@ -1042,9 +1060,8 @@ err := database.TransactionWithContext(ctx, func(tx *gorm.DB) error {
            password: password123
            db: 0
 ```
-#### 7.2 初始化缓存
+#### 初始化缓存
 ```go
-
 import (
     "dgou/pkg/cache"
     "dgou/pkg/config"
@@ -1068,19 +1085,19 @@ func main() {
     fmt.Println("User:", value)
 }
 ```
-#### 7.3 基础操作示例
-```go
 
+#### 基础操作示例
+```go
 // 设置缓存
 err := cache.Set(ctx, "user:1", map[string]interface{}{
-         "id":   1,
-         "name": "John Doe",
-         "email": "john@example.com",
+    "id":    1,
+    "name":  "John Doe",
+    "email": "john@example.com",
 }, 30*time.Minute)
 
 // 获取缓存
 value, err := cache.Get(ctx, "user:1")
-    if err != nil {
+if err != nil {
     // 处理错误
 }
 
@@ -1089,14 +1106,15 @@ err = cache.Delete(ctx, "user:1")
 
 // 批量操作
 values := map[string]interface{}{
-         "user:1": "John",
-         "user:2": "Jane",
+    "user:1": "John",
+    "user:2": "Jane",
 }
 err = cache.MSet(ctx, values, 30*time.Minute)
 
 result, err := cache.MGet(ctx, []string{"user:1", "user:2"})
 ```
-#### 7.4 高级操作示例
+
+#### 高级操作示例
 ```go
 
 // 获取或设置（防缓存击穿）
@@ -1121,45 +1139,47 @@ defer cache.Unlock(ctx, lockKey, token)
 
 // 执行需要锁保护的操作
 ```
-#### 7.5 缓存一致性策略
-```go
 
+##### 缓存一致性策略
+
+```go
 // 写穿透（Write-Through）
 err = cache.WriteThrough(ctx, "user:1", userData, func() error {
-// 先写数据库
-return db.UpdateUser(1, userData)
+    // 先写数据库
+    return db.UpdateUser(1, userData)
 }, 30*time.Minute)
 
 // 读穿透（Read-Through）
 user, err := cache.ReadThrough(ctx, "user:1", func() (interface{}, error) {
-// 从数据库加载
-return db.GetUser(1)
+    // 从数据库加载
+    return db.GetUser(1)
 }, 30*time.Minute)
 
 // 双删策略（Double Delete）
 err = cache.DoubleDelete(ctx, "user:1", func() error {
-// 更新数据库
-return db.UpdateUser(1, userData)
+    // 更新数据库
+    return db.UpdateUser(1, userData)
 }, 1*time.Second)
 
 // 缓存旁路（Cache-Aside）
 user, err := cache.CacheAside(ctx, "user:1",
-func() (interface{}, error) {
-return db.GetUser(1)
-},
-func() error {
-return db.UpdateUser(1, userData)
-},
-30*time.Minute,
+    func() (interface{}, error) {
+        return db.GetUser(1)
+    },
+    func() error {
+        return db.UpdateUser(1, userData)
+    },
+    30*time.Minute,
 )
+```
 
-6. 分布式锁示例
-go
+#### 分布式锁示例
 
+```go
 // 基本锁
 token, err := cache.Lock(ctx, "resource:1", 10*time.Second)
 if err != nil {
-return err
+    return err
 }
 defer cache.Unlock(ctx, "resource:1", token)
 
@@ -1168,121 +1188,124 @@ defer cache.Unlock(ctx, "resource:1", token)
 // 尝试锁（带超时）
 token, err := cache.TryLock(ctx, "resource:1", 10*time.Second, 5*time.Second)
 if err != nil {
-return errors.New("Failed to acquire lock within timeout")
+    return errors.New("Failed to acquire lock within timeout")
 }
 
 // 自动续期锁（适合长时间操作）
 token, err := cache.LockWithRenewal(ctx, "resource:1", 10*time.Second, 30*time.Second)
 if err != nil {
-return err
+    return err
 }
 defer cache.Unlock(ctx, "resource:1", token)
 
 // 可重入锁（同一线程可多次获取）
 if cache.ReentrantLock(ctx, "resource:1", "thread-1", 10*time.Second) {
-defer cache.ReentrantUnlock(ctx, "resource:1", "thread-1")
+    defer cache.ReentrantUnlock(ctx, "resource:1", "thread-1")
 }
+```
 
-7. 缓存防护策略
-go
+#### 缓存防护策略
 
+```go
 // 防止缓存穿透
 func GetUser(ctx context.Context, userID int) (*User, error) {
-key := fmt.Sprintf("user:%d", userID)
+    key := fmt.Sprintf("user:%d", userID)
 
-// 1. 检查布隆过滤器
-exists, _ := cache.BloomExists(ctx, "users", key)
-if !exists {
-return nil, errors.New("User not found")
-}
+    // 1. 检查布隆过滤器
+    exists, _ := cache.BloomExists(ctx, "users", key)
+    if !exists {
+        return nil, errors.New("User not found")
+    }
 
-// 2. 获取缓存
-user, err := cache.Get(ctx, key)
-if err == nil {
-return user, nil
-}
+    // 2. 获取缓存
+    user, err := cache.Get(ctx, key)
+    if err == nil {
+        return user, nil
+    }
 
-// 3. 缓存未命中，使用分布式锁防止击穿
-lockKey := fmt.Sprintf("lock:user:%d", userID)
-token, err := cache.Lock(ctx, lockKey, 5*time.Second)
-if err != nil {
-// 等待重试
-time.Sleep(100 * time.Millisecond)
-return GetUser(ctx, userID)
-}
-defer cache.Unlock(ctx, lockKey, token)
+    // 3. 缓存未命中，使用分布式锁防止击穿
+    lockKey := fmt.Sprintf("lock:user:%d", userID)
+    token, err := cache.Lock(ctx, lockKey, 5*time.Second)
+    if err != nil {
+        // 等待重试
+        time.Sleep(100 * time.Millisecond)
+        return GetUser(ctx, userID)
+    }
+    defer cache.Unlock(ctx, lockKey, token)
 
-// 4. 双检查锁
-user, err = cache.Get(ctx, key)
-if err == nil {
-return user, nil
-}
+    // 4. 双检查锁
+    user, err = cache.Get(ctx, key)
+    if err == nil {
+        return user, nil
+    }
 
-// 5. 从数据库加载
-user, err = db.GetUser(userID)
-if err != nil {
-// 防止缓存穿透：缓存空值
-_ = cache.Set(ctx, key, "", 30*time.Second)
-return nil, err
-}
+    // 5. 从数据库加载
+    user, err = db.GetUser(userID)
+    if err != nil {
+        // 防止缓存穿透：缓存空值
+        _ = cache.Set(ctx, key, "", 30*time.Second)
+        return nil, err
+    }
 
-// 6. 设置随机过期时间防止雪崩
-ttl := 30*time.Minute + time.Duration(rand.Intn(300))*time.Second
-_ = cache.Set(ctx, key, user, ttl)
+    // 6. 设置随机过期时间防止雪崩
+    ttl := 30*time.Minute + time.Duration(rand.Intn(300))*time.Second
+    _ = cache.Set(ctx, key, user, ttl)
 
-// 7. 更新布隆过滤器
-_ = cache.BloomAdd(ctx, "users", key)
+    // 7. 更新布隆过滤器
+    _ = cache.BloomAdd(ctx, "users", key)
 
-return user, nil
+    return user, nil
 }
 
 // 熔断器保护
 func GetWithCircuitBreaker(ctx context.Context, key string) (string, error) {
-cb := cache.NewCircuitBreaker(5, 30*time.Second)
+    cb := cache.NewCircuitBreaker(5, 30*time.Second)
 
-var result string
-err := cb.Execute(ctx, func() error {
-var err error
-result, err = cache.Get(ctx, key)
-return err
-})
+    var result string
+    err := cb.Execute(ctx, func() error {
+        var err error
+        result, err = cache.Get(ctx, key)
+        return err
+    })
 
-return result, err
+    return result, err
 }
+```
 
-8. 监控和统计
-go
+#### 监控和统计
 
+```go
 // 获取缓存统计
 stats := cache.Stats()
-         fmt.Printf("Hits: %d, Misses: %d, Hit Rate: %.2f%%\n",
-                                          stats.Hits, stats.Misses,
-                                          float64(stats.Hits)/float64(stats.Hits+stats.Misses)*100,
+fmt.Printf("Hits: %d, Misses: %d, Hit Rate: %.2f%%\n",
+    stats.Hits, stats.Misses,
+    float64(stats.Hits)/float64(stats.Hits+stats.Misses)*100,
 )
 
 // 检查Redis是否可用
 if cache.IsRedisAvailable() {
-fmt.Println("Redis is available")
+    fmt.Println("Redis is available")
 } else {
-fmt.Println("Using memory cache (fallback mode)")
+    fmt.Println("Using memory cache (fallback mode)")
 }
 
 // 获取连接池统计
 poolStats := cache.GetPoolStats()
-         fmt.Printf("Active Connections: %d, Idle Connections: %d\n",
-                                            poolStats.TotalConns, poolStats.IdleConns,
+fmt.Printf("Active Connections: %d, Idle Connections: %d\n",
+    poolStats.TotalConns, poolStats.IdleConns,
 )
 
 // 内存使用情况
 if cache.IsUsingMemoryCache() {
-         fmt.Printf("Memory Usage: %.2f MB\n",
-           float64(stats.MemoryUsage)/1024/1024,
-)
+    fmt.Printf("Memory Usage: %.2f MB\n",
+        float64(stats.MemoryUsage)/1024/1024,
+    )
 }
+```
 
-9. 数据结构操作
-go
+#### 数据结构操作
 
+```go
 // 哈希操作
 err := cache.HSet(ctx, "user:1:profile", "name", "John Doe")
 err = cache.HSet(ctx, "user:1:profile", "email", "john@example.com")
@@ -1303,15 +1326,16 @@ messages, err := cache.LRange(ctx, "messages", 0, 10)
 // 计数器
 count, err := cache.Increment(ctx, "page:views", 1)
 count, err = cache.Decrement(ctx, "inventory:item:1", 1)
+```
 
-10. 发布订阅
-go
+#### 发布订阅
 
+```go
 // 发布消息
 err := cache.Publish(ctx, "notifications", map[string]interface{}{
-         "type": "user:registered",
-         "user_id": 1,
-         "timestamp": time.Now(),
+    "type":      "user:registered",
+    "user_id":   1,
+    "timestamp": time.Now(),
 })
 
 // 订阅消息
@@ -1329,10 +1353,11 @@ switch notification["type"] {
            fmt.Println("New order created")
 }
 })
+```
 
-最佳实践
-1. 缓存键设计
-go
+#### 最佳实践
+##### 缓存键设计
+```go
 
 // 使用有意义的键结构
 // 格式：<前缀>:<实体>:<ID>:<字段>
@@ -1343,9 +1368,10 @@ orderItemsKey := fmt.Sprintf("order:%d:items", orderID)
 
 // 使用一致的命名规范
 // 推荐：小写字母、冒号分隔、避免特殊字符
+```
 
-2. 过期时间策略
-go
+##### 过期时间策略
+```go
 
 // 不同数据使用不同的TTL
 const (
@@ -1360,155 +1386,155 @@ func getTTLWithJitter(baseTTL time.Duration) time.Duration {
 jitter := time.Duration(rand.Intn(300)) * time.Second // 0-5分钟随机偏移
 return baseTTL + jitter
 }
+```
 
-3. 缓存降级策略
-go
-
+##### 缓存降级策略
+```go
 // 检查缓存状态，自动降级
 func GetData(ctx context.Context, key string) (string, error) {
-if !cache.IsRedisAvailable() {
-// 使用内存缓存或直接访问数据库
-logger.Warn("Redis unavailable, using fallback")
-return getFromFallback(ctx, key)
-}
+    if !cache.IsRedisAvailable() {
+        // 使用内存缓存或直接访问数据库
+        logger.Warn("Redis unavailable, using fallback")
+        return getFromFallback(ctx, key)
+    }
 
-return cache.Get(ctx, key)
+    return cache.Get(ctx, key)
 }
 
 // 多级缓存
 func GetWithMultiLevel(ctx context.Context, key string) (string, error) {
-// 1. 检查本地内存缓存
-if value, err := localCache.Get(key); err == nil {
-return value, nil
+    // 1. 检查本地内存缓存
+    if value, err := localCache.Get(key); err == nil {
+        return value, nil
+    }
+
+    // 2. 检查分布式缓存
+    if value, err := cache.Get(ctx, key); err == nil {
+        // 填充本地缓存
+        localCache.Set(key, value, 1*time.Minute)
+        return value, nil
+    }
+
+    // 3. 访问数据库
+    value, err := db.Get(key)
+    if err != nil {
+        return "", err
+    }
+
+    // 4. 填充两级缓存
+    cache.Set(ctx, key, value, 30*time.Minute)
+    localCache.Set(key, value, 1*time.Minute)
+
+    return value, nil
 }
+```
 
-// 2. 检查分布式缓存
-if value, err := cache.Get(ctx, key); err == nil {
-// 填充本地缓存
-localCache.Set(key, value, 1*time.Minute)
-return value, nil
-}
-
-// 3. 访问数据库
-value, err := db.Get(key)
-if err != nil {
-return "", err
-}
-
-// 4. 填充两级缓存
-cache.Set(ctx, key, value, 30*time.Minute)
-localCache.Set(key, value, 1*time.Minute)
-
-return value, nil
-}
-
-4. 缓存预热
-go
-
+##### 缓存预热
+```go
 // 应用启动时预热缓存
 func warmUpCache() {
-logger.Info("Warming up cache...")
+    logger.Info("Warming up cache...")
 
-// 预热热点数据
-hotKeys := []string{
-"config:global",
-"stats:daily",
-"leaderboard:top10",
-}
+    // 预热热点数据
+    hotKeys := []string{
+        "config:global",
+        "stats:daily",
+        "leaderboard:top10",
+    }
 
-for _, key := range hotKeys {
-cache.GetOrSet(context.Background(), key, func() (interface{}, error) {
-return loadHotData(key)
-}, 5*time.Minute)
-}
+    for _, key := range hotKeys {
+        cache.GetOrSet(context.Background(), key, func() (interface{}, error) {
+            return loadHotData(key)
+        }, 5*time.Minute)
+    }
 
-logger.Info("Cache warm-up completed")
+    logger.Info("Cache warm-up completed")
 }
 
 // 定期刷新缓存
 func startCacheRefresher() {
-ticker := time.NewTicker(5 * time.Minute)
-defer ticker.Stop()
+    ticker := time.NewTicker(5 * time.Minute)
+    defer ticker.Stop()
 
-for range ticker.C {
-refreshCriticalCache()
+    for range ticker.C {
+        refreshCriticalCache()
+    }
 }
-}
+```
 
-故障排除
-1. 缓存穿透解决方案
-go
-
+#### 故障排除
+##### 缓存穿透解决方案
+```go
 // 方案1：布隆过滤器
 func GetWithBloomFilter(ctx context.Context, key string) (string, error) {
-exists, _ := cache.BloomExists(ctx, "valid_keys", key)
-if !exists {
-return "", errors.New("Key not in bloom filter")
-}
-return cache.Get(ctx, key)
+    exists, _ := cache.BloomExists(ctx, "valid_keys", key)
+    if !exists {
+        return "", errors.New("Key not in bloom filter")
+    }
+    return cache.Get(ctx, key)
 }
 
 // 方案2：空值缓存
 func GetWithNullCache(ctx context.Context, key string) (string, error) {
-value, err := cache.Get(ctx, key)
-if err != nil && strings.Contains(err.Error(), "not found") {
-// 检查是否是空值占位符
-if value == "__NULL__" {
-return "", errors.New("Data does not exist")
-}
-}
-return value, err
+    value, err := cache.Get(ctx, key)
+    if err != nil && strings.Contains(err.Error(), "not found") {
+        // 检查是否是空值占位符
+        if value == "__NULL__" {
+            return "", errors.New("Data does not exist")
+        }
+    }
+    return value, err
 }
 
 // 方案3：接口限流
 func GetWithRateLimit(ctx context.Context, key string) (string, error) {
-if !rateLimiter.Allow() {
-return "", errors.New("Rate limit exceeded")
+    if !rateLimiter.Allow() {
+        return "", errors.New("Rate limit exceeded")
+    }
+    return cache.Get(ctx, key)
 }
-return cache.Get(ctx, key)
-}
+```
 
-2. 缓存击穿解决方案
-go
-
+##### 缓存击穿解决方案
+```go
 // 方案1：互斥锁
 func GetWithMutex(ctx context.Context, key string) (string, error) {
-lockKey := "mutex:" + key
-token, err := cache.Lock(ctx, lockKey, 5*time.Second)
-if err != nil {
-// 等待并重试
-time.Sleep(100 * time.Millisecond)
-return GetWithMutex(ctx, key)
-}
-defer cache.Unlock(ctx, lockKey, token)
+    lockKey := "mutex:" + key
+    token, err := cache.Lock(ctx, lockKey, 5*time.Second)
+    if err != nil {
+        // 等待并重试
+        time.Sleep(100 * time.Millisecond)
+        return GetWithMutex(ctx, key)
+    }
+    defer cache.Unlock(ctx, lockKey, token)
 
-return cache.GetOrSet(ctx, key, loadFromDB, 30*time.Minute)
+    return cache.GetOrSet(ctx, key, loadFromDB, 30*time.Minute)
 }
 
 // 方案2：逻辑过期
 func GetWithLogicalExpire(ctx context.Context, key string) (string, error) {
-data, err := cache.Get(ctx, key)
-if err != nil {
-return "", err
+    data, err := cache.Get(ctx, key)
+    if err != nil {
+        return "", err
+    }
+
+    // 解析数据，检查逻辑过期时间
+    var item CacheItem
+    json.Unmarshal([]byte(data), &item)
+
+    if time.Now().After(item.LogicalExpire) {
+        // 异步更新缓存
+        go func() {
+            newData, _ := loadFromDB()
+            cache.Set(ctx, key, newData, 30*time.Minute)
+        }()
+    }
+
+    return item.Data, nil
 }
-
-// 解析数据，检查逻辑过期时间
-var item CacheItem
-json.Unmarshal([]byte(data), &item)
-
-if time.Now().After(item.LogicalExpire) {
-// 异步更新缓存
-go func() {
-newData, _ := loadFromDB()
-cache.Set(ctx, key, newData, 30*time.Minute)
-}()
-}
-
-return item.Data, nil
-}
-
-3. 缓存雪崩解决方案
-go
+```
+##### 缓存雪崩解决方案
+```go
 
 // 方案1：随机过期时间
 func SetWithRandomTTL(ctx context.Context, key string, value interface{}, baseTTL time.Duration) error {
@@ -1563,10 +1589,10 @@ return getDegradedData(key)
 // 正常从数据库加载
 return loadFromDB()
 }
-
-性能调优
-1. Redis连接池优化
-yaml
+```
+#### 性能调优
+##### Redis连接池优化
+```yaml
 
          redis:
            pool_size: 100      # 连接池大小（根据QPS调整）
@@ -1574,9 +1600,9 @@ yaml
            max_retries: 3      # 最大重试次数
            read_timeout: 3s    # 读取超时
            write_timeout: 3s   # 写入超时
-
-2. 内存缓存优化
-go
+```
+##### 内存缓存优化
+```go
 
 // 使用适当的数据结构
 type OptimizedCache struct {
@@ -1592,9 +1618,9 @@ for range ticker.C {
 c.evictExpired()
 }
 }
-
-3. 监控指标
-go
+```
+##### 监控指标
+```go
 
 // 关键监控指标
 type CacheMetrics struct {
@@ -1626,11 +1652,11 @@ if metrics.ErrorRate > 0.01 {
 alert("Cache error rate too high")
 }
 }
-
+```
 这个缓存组件提供了完整的生产级缓存解决方案，支持Redis和内存缓存降级，并实现了所有高级特性。您可以根据实际需求选择使用不同的策略和配置。         
 
 
-## 认证组件 (Auth)
+### 8. 认证组件 (pkg/auth)
 
 ### 特性
 - ✅ JWT v5 安全实现（支持HS256签名）
@@ -1645,7 +1671,7 @@ alert("Cache error rate too high")
 
 ### 快速开始
 
-#### 1. 基本配置
+#### 基本配置
 
 ```yaml
 # config/config.yaml
@@ -1658,9 +1684,9 @@ alert("Cache error rate too high")
            audience: "dgou-client"
            enable_2fa: false
            enable_rbac: true
-
-  2. 用户提供者接口实现
-  go
+```
+#### 用户提供者接口实现
+```go
 
   package services
 
@@ -1696,9 +1722,9 @@ alert("Cache error rate too high")
 }
 
   // 实现其他接口方法...
-
-  3. 初始化认证
-  go
+```
+#### 初始化认证
+```go
 
   import (
   "dgou/pkg/auth"
@@ -1731,9 +1757,9 @@ alert("Cache error rate too high")
 }
   oauth2Manager.RegisterProvider(auth.OAuth2Google, googleConfig)
 }
-
-  4. 认证路由示例
-  go
+```
+#### 认证路由示例
+```go
 
   package api
 
@@ -1871,9 +1897,9 @@ alert("Cache error rate too high")
          "permissions": userClaims.Permissions,
 })
 }
-
-  5. 权限控制示例
-  go
+```
+#### 权限控制示例
+```go
 
   // 需要认证的路由
   func setupAuthRoutes(router *gin.Engine, authManager *auth.AuthManager) {
@@ -2033,9 +2059,9 @@ alert("Cache error rate too high")
 })
 })
 }
-
-  6. OAuth2.0集成示例
-  go
+```
+#### OAuth2.0集成示例
+```go
 
   // OAuth2路由
   func setupOAuth2Routes(router *gin.Engine, authManager *auth.AuthManager, oauth2Manager *auth.OAuth2Manager) {
@@ -2115,9 +2141,9 @@ alert("Cache error rate too high")
 }
   return base64.URLEncoding.EncodeToString(bytes), nil
 }
-
-  7. API密钥认证示例
-  go
+```
+#### API密钥认证示例
+```go
 
   // API密钥路由
   func setupAPIKeyRoutes(router *gin.Engine, apiKeyManager *auth.APIKeyManager) {
@@ -2235,10 +2261,10 @@ alert("Cache error rate too high")
   response.Success(c, data)
 })
 }
-
-  高级特性
-  1. 自定义用户声明
-  go
+```
+#### 高级特性
+##### 自定义用户声明
+```go
 
   // 添加自定义声明
   claims := &auth.UserClaims{
@@ -2270,9 +2296,9 @@ alert("Cache error rate too high")
   c.Next()
 }
 }
-
-  2. 令牌黑名单
-  go
+```
+##### 令牌黑名单
+```go
 
   // 吊销令牌
   func revokeTokenHandler(c *gin.Context) {
@@ -2309,9 +2335,9 @@ alert("Cache error rate too high")
          "message": "All tokens revoked successfully",
 })
 }
-
-  3. 会话管理
-  go
+```
+##### 会话管理
+```go
 
   // 获取用户所有会话
   func listSessionsHandler(c *gin.Context) {
@@ -2370,9 +2396,9 @@ alert("Cache error rate too high")
          "message": "Other sessions terminated successfully",
 })
 }
-
-  4. 密码策略
-  go
+```
+##### 密码策略
+```go
 
   // 密码验证器
   type PasswordValidator struct {
@@ -2474,10 +2500,10 @@ alert("Cache error rate too high")
          "message": "Password updated successfully. Please login again.",
 })
 }
-
-  安全最佳实践
-  1. JWT安全配置
-  go
+```
+#### 安全最佳实践
+##### JWT安全配置
+```go
 
   // 使用强密钥
   jwtSecret := generateStrongSecret(64)
@@ -2488,9 +2514,9 @@ alert("Cache error rate too high")
 
   // 使用HTTPS传输
   // 启用HttpOnly和Secure Cookie
-
-  2. 防止令牌泄露
-  go
+```
+##### 防止令牌泄露
+```go
 
   // 令牌轮换
   func rotateTokens(refreshToken string) (*auth.TokenPair, error) {
@@ -2506,9 +2532,9 @@ alert("Cache error rate too high")
   // 验证时检查上下文是否匹配
   // 不匹配则拒绝访问
 }
-
-  3. 速率限制
-  go
+```
+##### 速率限制
+```go
 
   // 登录尝试限制
   func loginRateLimitMiddleware() gin.HandlerFunc {
@@ -2531,10 +2557,10 @@ alert("Cache error rate too high")
   c.Next()
 }
 }
-
-  故障排除
-  1. 令牌验证失败
-  go
+```
+#### 故障排除
+##### 令牌验证失败
+```go
 
   // 检查令牌格式
   token := strings.TrimPrefix(authHeader, "Bearer ")
@@ -2553,9 +2579,9 @@ alert("Cache error rate too high")
   if err != nil || revoked {
   return errors.New("Token has been revoked")
 }
-
-  2. 权限检查失败
-  go
+```
+##### 权限检查失败
+```go
 
   // 检查用户角色
   userClaims := GetUserFromContext(c)
@@ -2577,9 +2603,9 @@ alert("Cache error rate too high")
   if !authManager.HasAllPermissions(userClaims, requiredPermissions) {
   return errors.New("Missing required permissions")
 }
-
-  3. 双因子认证问题
-  go
+```
+##### 双因子认证问题
+```go
 
   // 处理TOTP代码验证
   func verifyTOTPCode(secret, code string) error {
@@ -2611,40 +2637,38 @@ alert("Cache error rate too high")
 }
   return false, nil
 }
+```
+这个认证组件提供了完整的生产级认证解决方案，支持多种认证方式和安全特性。您可以根据实际需求选择使用不同的认证策略。
 
-  这个认证组件提供了完整的生产级认证解决方案，支持多种认证方式和安全特性。您可以根据实际需求选择使用不同的认证策略。
 
+### 9. 异步任务组件 (pkg/async)
 
-  # Dgou Framework - 生产级 Go Gin 脚手架
+### 特性
+ - ✅ **协程池管理**：可配置的协程池，支持动态调整工作协程数
+ - ✅ **任务优先级**：4级优先级（低、正常、高、关键），支持优先队列
+ - ✅ **失败重试机制**：可配置的重试次数和重试延迟，支持指数退避
+ - ✅ **任务状态追踪**：完整的任务生命周期管理，实时状态监控
+ - ✅ **任务结果查询**：支持任务结果持久化和查询
+ - ✅ **任务超时控制**：每个任务可配置独立超时时间
+ - ✅ **优雅关闭**：支持优雅关闭，确保任务完成不丢失
+ - ✅ **详细指标监控**：全面的性能指标和统计信息
+ - ✅ **任务取消支持**：可随时取消正在执行的任务
+ - ✅ **防内存泄漏**：自动清理过期任务，防止内存泄漏
 
-  ## 异步任务组件 (pkg/async)
+### 快速开始
 
-  ### 特性
-         - ✅ **协程池管理**：可配置的协程池，支持动态调整工作协程数
-         - ✅ **任务优先级**：4级优先级（低、正常、高、关键），支持优先队列
-         - ✅ **失败重试机制**：可配置的重试次数和重试延迟，支持指数退避
-         - ✅ **任务状态追踪**：完整的任务生命周期管理，实时状态监控
-         - ✅ **任务结果查询**：支持任务结果持久化和查询
-         - ✅ **任务超时控制**：每个任务可配置独立超时时间
-         - ✅ **优雅关闭**：支持优雅关闭，确保任务完成不丢失
-         - ✅ **详细指标监控**：全面的性能指标和统计信息
-         - ✅ **任务取消支持**：可随时取消正在执行的任务
-         - ✅ **防内存泄漏**：自动清理过期任务，防止内存泄漏
+#### 基本配置
 
-  ### 快速开始
-
-  #### 1. 基本配置
-
-  ```yaml
+```yaml
   # config/config.yaml
          async:
            max_workers: 100           # 最大工作协程数
            max_queue_size: 10000      # 最大队列大小
            worker_idle_time: 30s      # 工作协程空闲时间
            enable_metrics: true       # 是否启用指标
-
-  2. 初始化任务管理器
-  go
+```
+#### 初始化任务管理器
+```go
 
   import (
   "dgou/pkg/async"
@@ -2661,9 +2685,9 @@ alert("Cache error rate too high")
   log.Fatal(err)
   }
 }
-
-  3. 创建并提交任务
-  go
+```
+#### 创建并提交任务
+```go
 
   // 定义任务处理函数
   func processImage(ctx context.Context, params interface{}) (interface{}, error) {
@@ -2696,9 +2720,9 @@ alert("Cache error rate too high")
 }
 
          log.Printf("Task submitted: %s", taskID)
-
-  4. 等待任务完成并获取结果
-  go
+```
+#### 等待任务完成并获取结果
+```go
 
   // 等待任务完成（阻塞方式）
   result, err := async.SubmitAndWait(task, 60*time.Second)
@@ -2723,9 +2747,9 @@ alert("Cache error rate too high")
   log.Println("Task wait timeout")
 }
 }()
-
-  5. 查询任务状态
-  go
+```
+#### 查询任务状态
+```go
 
   // 根据任务ID查询任务
   task, err := async.GetTaskByID(taskID)
@@ -2747,10 +2771,10 @@ alert("Cache error rate too high")
          log.Printf("Task result: %v", result.Value)
 }
 }
-
-  高级用法
-  1. 创建自定义协程池
-  go
+```
+#### 高级用法
+##### 创建自定义协程池
+```go
 
   // 创建协程池配置
   config := &async.PoolConfig{
@@ -2772,9 +2796,9 @@ alert("Cache error rate too high")
          log.Printf("Failed to submit task: %v", err)
   return
 }
-
-  2. 任务优先级示例
-  go
+```
+##### 任务优先级示例
+```go
 
   // 创建不同优先级的任务
   lowPriorityTask := async.NewTask("low_task", handler, params).
@@ -2790,9 +2814,9 @@ alert("Cache error rate too high")
   WithPriority(async.PriorityCritical) // 关键优先级
 
   // 高优先级任务会先执行，即使后提交
-
-  3. 任务重试策略
-  go
+```
+##### 任务重试策略
+```go
 
   // 指数退避重试
   task := async.NewTask("retry_task", handler, params).
@@ -2819,9 +2843,9 @@ alert("Cache error rate too high")
 }
   return nil, errors.New("Max retries exceeded")
 }
-
-  4. 任务依赖关系
-  go
+```
+##### 任务依赖关系
+```go
 
   // 创建有依赖关系的任务链
   func createTaskChain() {
@@ -2854,9 +2878,9 @@ alert("Cache error rate too high")
 }
 }
 }
-
-  5. 批量任务处理
-  go
+```
+##### 批量任务处理
+```go
 
   // 批量提交任务
   func processBatch(items []Item) []string {
@@ -2900,9 +2924,9 @@ alert("Cache error rate too high")
 
   return results
 }
-
-  6. 任务取消和超时处理
-  go
+```
+##### 任务取消和超时处理
+```go
 
   // 取消任务
   func cancelTask(taskID string) error {
@@ -2944,9 +2968,9 @@ alert("Cache error rate too high")
 
   return "completed", nil
 }
-
-  7. 监控和指标
-  go
+```
+##### 监控和指标
+```go
 
   // 获取协程池统计信息
   func monitorPool() {
@@ -2979,9 +3003,9 @@ alert("Cache error rate too high")
          fmt.Printf("  Completed Tasks: %d\n", stats.Completed)
          fmt.Printf("  Failed Tasks: %d\n", stats.Failed)
 }
-
-  8. 优雅关闭
-  go
+```
+##### 优雅关闭
+```go
 
   // 在应用关闭时优雅停止协程池
   func gracefulShutdown() {
@@ -3000,10 +3024,10 @@ alert("Cache error rate too high")
 
   log.Println("All worker pools stopped")
 }
-
-  配置说明
-  协程池配置
-  yaml
+```
+#### 配置说明
+##### 协程池配置
+```yaml
 
          async:
            # 默认协程池配置
@@ -3024,16 +3048,19 @@ alert("Cache error rate too high")
                max_workers: 20          # 邮件发送专用池
                max_queue_size: 2000
                worker_idle_time: 30s
+```
+##### 任务配置
 
-  任务配置
-  配置项	默认值	说明
-  Priority	PriorityNormal	任务优先级
-  MaxRetries	3	最大重试次数
-  RetryDelay	1s	重试延迟时间
-  Timeout	30s	任务执行超时时间
-  最佳实践
-  1. 合理设置协程池大小
-  go
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| Priority | PriorityNormal | 任务优先级 |
+| MaxRetries | 3 | 最大重试次数 |
+| RetryDelay | 1s | 重试延迟时间 |
+| Timeout | 30s | 任务执行超时时间 |
+
+#### 最佳实践
+##### 合理设置协程池大小
+```go
 
   // 根据CPU核心数设置协程池大小
   func calculatePoolSize() int {
@@ -3050,9 +3077,9 @@ alert("Cache error rate too high")
          WorkerIdleTime: 60 * time.Second,
 }
 }
-
-  2. 任务幂等性设计
-  go
+```
+##### 任务幂等性设计
+```go
 
   // 确保任务可以安全重试
   func idempotentHandler(ctx context.Context, params interface{}) (interface{}, error) {
@@ -3079,9 +3106,9 @@ alert("Cache error rate too high")
 
   return result, nil
 }
-
-  3. 资源限制和熔断
-  go
+```
+##### 资源限制和熔断
+```go
 
   // 使用信号量限制并发
   var semaphore = make(chan struct{}, 10) // 最大10个并发
@@ -3130,9 +3157,9 @@ alert("Cache error rate too high")
 
   return result, err
 }
-
-  4. 错误处理和日志
-  go
+```
+##### 错误处理和日志
+```go
 
   // 详细的错误处理和日志记录
   func handlerWithLogging(ctx context.Context, params interface{}) (interface{}, error) {
@@ -3166,10 +3193,10 @@ alert("Cache error rate too high")
 
   return result, nil
 }
-
-  故障排除
-  1. 任务队列积压
-  go
+```
+#### 故障排除
+##### 任务队列积压
+```go
 
   // 监控队列积压
   func monitorQueueBacklog() {
@@ -3209,9 +3236,9 @@ alert("Cache error rate too high")
   )
 }
 }
-
-  2. 内存泄漏检测
-  go
+```
+##### 内存泄漏检测
+```go
 
   // 定期检查任务存储
   func checkMemoryLeak() {
@@ -3237,9 +3264,9 @@ alert("Cache error rate too high")
   )
 }
 }
-
-  3. 死锁检测
-  go
+```
+##### 死锁检测
+```go
 
   // 监控工作协程状态
   func monitorWorkerHealth() {
@@ -3260,28 +3287,13 @@ alert("Cache error rate too high")
   }
 }
 }
+```
 
-  性能优化建议
+这个异步任务组件提供了完整的生产级解决方案，支持高并发、高可靠性的异步任务处理。您可以根据实际需求调整配置和使用方式。
 
-  协程池大小调优：根据任务类型调整协程池大小，CPU密集型任务使用较小池，I/O密集型任务使用较大池。
-
-  合理设置队列大小：根据内存容量和任务特点设置队列大小，避免内存溢出。
-
-  使用适当的数据结构：优先队列使用二叉堆实现，确保插入和删除的复杂度为O(log n)。
-
-  批量操作优化：对于大量小任务，考虑批量提交以提高效率。
-
-  内存复用：对于频繁创建的任务对象，考虑使用对象池。
-
-  异步I/O：在任务处理函数中使用异步I/O，避免阻塞工作协程。
-
-  监控和告警：设置关键指标的告警阈值，如队列长度、任务失败率等。
-
-  这个异步任务组件提供了完整的生产级解决方案，支持高并发、高可靠性的异步任务处理。您可以根据实际需求调整配置和使用方式。
-
-  ## 文件上传组件 (pkg/upload)
-  ## 队列组件 (pkg/queue)
-## 9. 监控组件 (pkg/monitor)## 
+### 10. 文件上传组件 (pkg/upload) [查看文档](https://github.com/dgoukj/dgou-framework/tree/main/pkg/upload)
+### 11. 队列组件 (pkg/queue) [查看文档](https://github.com/dgoukj/dgou-framework/tree/main/pkg/queue)
+### 12. 监控组件 (pkg/monitor) [查看文档](https://github.com/dgoukj/dgou-framework/tree/main/pkg/monitor)
 
 ## 完整示例
 ### 创建用户服务
