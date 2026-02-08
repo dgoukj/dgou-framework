@@ -10,8 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -29,16 +31,23 @@ func (m *Monitor) TracingMiddleware() gin.HandlerFunc {
 		tracer := m.tracerProvider.Tracer("http")
 		spanName := c.Request.Method + " " + c.FullPath()
 
+		// 创建属性列表
+		attrs := []attribute.KeyValue{
+			semconv.HTTPMethodKey.String(c.Request.Method),
+			semconv.HTTPURLKey.String(c.Request.URL.String()),
+			semconv.HTTPRouteKey.String(c.FullPath()),
+			semconv.HTTPRequestContentLengthKey.Int(int(c.Request.ContentLength)),
+			semconv.HTTPUserAgentKey.String(c.Request.UserAgent()),
+		}
+
+		// 添加客户端IP
+		if c.ClientIP() != "" {
+			attrs = append(attrs, semconv.HTTPClientIPKey.String(c.ClientIP()))
+		}
+
 		ctx, span := tracer.Start(ctx, spanName,
 			trace.WithSpanKind(trace.SpanKindServer),
-			trace.WithAttributes(
-				semconv.HTTPMethod(c.Request.Method),
-				semconv.HTTPURL(c.Request.URL.String()),
-				semconv.HTTPRequestContentLength(int(c.Request.ContentLength)),
-				semconv.HTTPRoute(c.FullPath()),
-				semconv.UserAgentOriginal(c.Request.UserAgent()),
-				semconv.ClientAddress(c.ClientIP()),
-			),
+			trace.WithAttributes(attrs...),
 		)
 		defer span.End()
 
@@ -51,9 +60,15 @@ func (m *Monitor) TracingMiddleware() gin.HandlerFunc {
 		// 记录响应信息
 		status := c.Writer.Status()
 		span.SetAttributes(
-			semconv.HTTPStatusCode(status),
-			semconv.HTTPResponseContentLength(c.Writer.Size()),
+			semconv.HTTPStatusCodeKey.Int(status),
 		)
+
+		// 如果有响应大小，记录它
+		if size := c.Writer.Size(); size > 0 {
+			span.SetAttributes(
+				semconv.HTTPResponseContentLengthKey.Int(size),
+			)
+		}
 
 		// 设置span状态
 		if status >= 400 {
