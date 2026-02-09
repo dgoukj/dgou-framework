@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"dgou/pkg/errors"
 	"encoding/json"
 	"fmt"
@@ -327,6 +326,12 @@ func (om *OAuth2Manager) ValidateIDToken(provider OAuth2Provider, idToken string
 		return nil, errors.New(errors.CodeValidationFailed,
 			"ID token validation not supported for this provider")
 	}
+}
+
+// 在 validateAppleIDToken 函数前添加空实现
+func (om *OAuth2Manager) validateAppleIDToken(idToken string) (*OAuth2UserInfo, error) {
+	// TODO: 实现 Apple ID 令牌验证
+	return nil, errors.New(errors.CodeValidationFailed, "Apple ID token validation not implemented yet")
 }
 
 func (om *OAuth2Manager) validateGoogleIDToken(idToken string) (*OAuth2UserInfo, error) {

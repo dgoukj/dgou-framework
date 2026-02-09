@@ -73,18 +73,3 @@ func CloseAuth() error {
 	}
 	return globalAuth.Close()
 }
-
-// 快捷方法
-var (
-	// HashPassword 哈希密码
-	HashPassword = HashPassword
-
-	// VerifyPassword 验证密码
-	VerifyPassword = VerifyPassword
-
-	// GenerateRandomPassword 生成随机密码
-	GenerateRandomPassword = GenerateRandomPassword
-
-	// GenerateAPIKey 生成API密钥
-	GenerateAPIKey = GenerateAPIKey
-)

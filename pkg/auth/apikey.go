@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"dgou/pkg/errors"
 	"encoding/base64"
 	"fmt"

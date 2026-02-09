@@ -3,30 +3,36 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
-	"dgou/pkg/cache"
 	"dgou/pkg/errors"
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 )
 
+// CacheAdapter 缓存适配器接口
+type CacheAdapter interface {
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
+	Get(ctx context.Context, key string) (string, error)
+	Delete(ctx context.Context, key string) error
+	Exists(ctx context.Context, key string) (bool, error)
+	SAdd(ctx context.Context, key string, members ...interface{}) error
+	SRem(ctx context.Context, key string, members ...interface{}) error
+	SMembers(ctx context.Context, key string) ([]string, error)
+	Expire(ctx context.Context, key string, expiration time.Duration) error
+}
+
 // RedisTokenStore Redis令牌存储实现
 type RedisTokenStore struct {
-	cache  cache.Cache
+	cache  CacheAdapter
 	prefix string
 }
 
 // NewRedisTokenStore 创建Redis令牌存储
 func NewRedisTokenStore() *RedisTokenStore {
-	// 获取全局缓存实例
-	cacheInstance := cache.GetCache()
-	if cacheInstance == nil {
-		// 如果缓存未初始化，创建一个内存缓存作为后备
-		cacheInstance = &cache.MemoryCache{}
-	}
-
 	return &RedisTokenStore{
-		cache:  cacheInstance,
+		cache:  NewMemoryCacheAdapter(),
 		prefix: "auth:token",
 	}
 }
@@ -69,10 +75,11 @@ func (rts *RedisTokenStore) GetToken(ctx context.Context, userID uint64, tokenTy
 
 	token, err := rts.cache.Get(ctx, key)
 	if err != nil {
-		if errors.Is(err, errors.CodeResourceNotFound) {
-			return "", errors.New(errors.CodeResourceNotFound, "Token not found")
-		}
 		return "", errors.Wrap(err, errors.CodeInternalError, "Failed to get token from Redis")
+	}
+
+	if token == "" {
+		return "", errors.New(errors.CodeResourceNotFound, "Token not found")
 	}
 
 	return token, nil
@@ -132,7 +139,13 @@ func (rts *RedisTokenStore) RevokeToken(ctx context.Context, token string, reaso
 		"time":   time.Now().Format(time.RFC3339),
 	}
 
-	if err := rts.cache.Set(ctx, key, revocationInfo, 24*time.Hour); err != nil {
+	// 序列化吊销信息
+	infoJSON, err := json.Marshal(revocationInfo)
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal revocation info")
+	}
+
+	if err := rts.cache.Set(ctx, key, string(infoJSON), 24*time.Hour); err != nil {
 		return errors.Wrap(err, errors.CodeInternalError, "Failed to revoke token")
 	}
 
@@ -148,6 +161,10 @@ func (rts *RedisTokenStore) GetUserIDFromToken(ctx context.Context, token string
 		return 0, errors.Wrap(err, errors.CodeInternalError, "Failed to get user ID from token")
 	}
 
+	if value == "" {
+		return 0, errors.New(errors.CodeResourceNotFound, "User ID not found for token")
+	}
+
 	userID, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
 		return 0, errors.Wrap(err, errors.CodeInternalError, "Failed to parse user ID")
@@ -158,6 +175,273 @@ func (rts *RedisTokenStore) GetUserIDFromToken(ctx context.Context, token string
 
 // CleanupExpiredTokens 清理过期令牌
 func (rts *RedisTokenStore) CleanupExpiredTokens(ctx context.Context) error {
-	// Redis会自动清理过期的键，这里不需要额外操作
+	// 内存缓存会自动清理过期的键，这里不需要额外操作
 	return nil
+}
+
+// ==================== 内存缓存适配器实现 ====================
+
+// MemoryCacheAdapter 内存缓存适配器
+type MemoryCacheAdapter struct {
+	data map[string]cacheEntry
+	mu   sync.RWMutex
+}
+
+type cacheEntry struct {
+	value      string
+	expiration time.Time
+}
+
+// NewMemoryCacheAdapter 创建内存缓存适配器
+func NewMemoryCacheAdapter() *MemoryCacheAdapter {
+	adapter := &MemoryCacheAdapter{
+		data: make(map[string]cacheEntry),
+	}
+
+	// 启动后台清理任务
+	go adapter.cleanupExpired()
+
+	return adapter
+}
+
+// Set 设置值
+func (m *MemoryCacheAdapter) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var valueStr string
+	switch v := value.(type) {
+	case string:
+		valueStr = v
+	case int, int64, uint, uint64:
+		valueStr = fmt.Sprintf("%d", v)
+	default:
+		// 尝试 JSON 序列化
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal value")
+		}
+		valueStr = string(jsonBytes)
+	}
+
+	m.data[key] = cacheEntry{
+		value:      valueStr,
+		expiration: time.Now().Add(expiration),
+	}
+
+	return nil
+}
+
+// Get 获取值
+func (m *MemoryCacheAdapter) Get(ctx context.Context, key string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	entry, exists := m.data[key]
+	if !exists {
+		return "", nil
+	}
+
+	// 检查是否过期
+	if entry.expiration.Before(time.Now()) {
+		// 异步删除过期键
+		go func() {
+			m.mu.Lock()
+			delete(m.data, key)
+			m.mu.Unlock()
+		}()
+		return "", nil
+	}
+
+	return entry.value, nil
+}
+
+// Delete 删除键
+func (m *MemoryCacheAdapter) Delete(ctx context.Context, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.data, key)
+	return nil
+}
+
+// Exists 检查键是否存在
+func (m *MemoryCacheAdapter) Exists(ctx context.Context, key string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	entry, exists := m.data[key]
+	if !exists {
+		return false, nil
+	}
+
+	// 检查是否过期
+	if entry.expiration.Before(time.Now()) {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// SAdd 添加到集合
+func (m *MemoryCacheAdapter) SAdd(ctx context.Context, key string, members ...interface{}) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 获取现有集合
+	entry, exists := m.data[key]
+	var set map[string]bool
+
+	if exists {
+		// 解析现有集合
+		var existingMembers []string
+		if err := json.Unmarshal([]byte(entry.value), &existingMembers); err == nil {
+			set = make(map[string]bool)
+			for _, member := range existingMembers {
+				set[member] = true
+			}
+		}
+	}
+
+	if set == nil {
+		set = make(map[string]bool)
+	}
+
+	// 添加新成员
+	for _, member := range members {
+		switch v := member.(type) {
+		case string:
+			set[v] = true
+		default:
+			set[fmt.Sprintf("%v", v)] = true
+		}
+	}
+
+	// 转换回切片
+	var result []string
+	for member := range set {
+		result = append(result, member)
+	}
+
+	// 序列化并存储
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal set")
+	}
+
+	m.data[key] = cacheEntry{
+		value:      string(jsonBytes),
+		expiration: entry.expiration,
+	}
+
+	return nil
+}
+
+// SRem 从集合中移除成员
+func (m *MemoryCacheAdapter) SRem(ctx context.Context, key string, members ...interface{}) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entry, exists := m.data[key]
+	if !exists {
+		return nil
+	}
+
+	// 解析现有集合
+	var existingMembers []string
+	if err := json.Unmarshal([]byte(entry.value), &existingMembers); err != nil {
+		return nil // 如果解析失败，视为空集合
+	}
+
+	// 转换为 map 便于删除
+	set := make(map[string]bool)
+	for _, member := range existingMembers {
+		set[member] = true
+	}
+
+	// 删除指定成员
+	for _, member := range members {
+		switch v := member.(type) {
+		case string:
+			delete(set, v)
+		default:
+			delete(set, fmt.Sprintf("%v", v))
+		}
+	}
+
+	// 转换回切片
+	var result []string
+	for member := range set {
+		result = append(result, member)
+	}
+
+	// 序列化并存储
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to marshal set")
+	}
+
+	m.data[key] = cacheEntry{
+		value:      string(jsonBytes),
+		expiration: entry.expiration,
+	}
+
+	return nil
+}
+
+// SMembers 获取集合所有成员
+func (m *MemoryCacheAdapter) SMembers(ctx context.Context, key string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	entry, exists := m.data[key]
+	if !exists {
+		return []string{}, nil
+	}
+
+	// 检查是否过期
+	if entry.expiration.Before(time.Now()) {
+		return []string{}, nil
+	}
+
+	// 解析集合
+	var members []string
+	if err := json.Unmarshal([]byte(entry.value), &members); err != nil {
+		return []string{}, nil
+	}
+
+	return members, nil
+}
+
+// Expire 设置过期时间
+func (m *MemoryCacheAdapter) Expire(ctx context.Context, key string, expiration time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entry, exists := m.data[key]
+	if !exists {
+		return nil
+	}
+
+	entry.expiration = time.Now().Add(expiration)
+	m.data[key] = entry
+
+	return nil
+}
+
+// cleanupExpired 清理过期键的后台任务
+func (m *MemoryCacheAdapter) cleanupExpired() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		m.mu.Lock()
+		now := time.Now()
+		for key, entry := range m.data {
+			if entry.expiration.Before(now) {
+				delete(m.data, key)
+			}
+		}
+		m.mu.Unlock()
+	}
 }

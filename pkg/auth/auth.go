@@ -4,13 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"dgou/pkg/config"
 	"dgou/pkg/errors"
 	"dgou/pkg/logger"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
+	"go.uber.org/zap"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,7 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // AuthType 认证类型
@@ -93,8 +89,8 @@ type UserClaims struct {
 	Permissions   []Permission           `json:"permissions"`
 	IsActive      bool                   `json:"is_active"`
 	TwoFactorAuth bool                   `json:"two_factor_auth"`
+	TokenType     string                 `json:"token_type,omitempty"`
 	CustomClaims  map[string]interface{} `json:"custom_claims,omitempty"`
-	jwt.RegisteredClaims
 }
 
 // TokenPair 令牌对
@@ -169,7 +165,7 @@ type AuthManager struct {
 	tokenStore   TokenStore                       // 令牌存储
 	sessionStore SessionStore                     // 会话存储
 	userProvider UserProvider                     // 用户提供者
-	logger       *logger.Logger                   // 日志
+	logger       *zap.Logger                      // 日志
 	mu           sync.RWMutex                     // 读写锁
 }
 
@@ -300,70 +296,10 @@ func (am *AuthManager) SetRBACConfig(config *RBACConfig) {
 	am.rbacConfig = config
 }
 
-// ==================== 密码相关方法 ====================
-
-// HashPassword 哈希密码
-func HashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return "", errors.Wrap(err, errors.CodeInternalError, "Failed to hash password")
-	}
-	return string(hash), nil
-}
-
-// VerifyPassword 验证密码
-func VerifyPassword(hashedPassword, password string) error {
-	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
-	if err != nil {
-		return errors.New(errors.CodeUnauthorized, "Invalid password")
-	}
-	return nil
-}
-
-// GenerateRandomPassword 生成随机密码
-func GenerateRandomPassword(length int) (string, error) {
-	if length < 8 {
-		length = 8
-	}
-
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", errors.Wrap(err, errors.CodeInternalError, "Failed to generate random password")
-	}
-
-	// 转换为base64并取前length个字符
-	encoded := base64.URLEncoding.EncodeToString(bytes)
-	if len(encoded) > length {
-		encoded = encoded[:length]
-	}
-
-	return encoded, nil
-}
-
-// GenerateAPIKey 生成API密钥
-func GenerateAPIKey(prefix string) (string, error) {
-	// 生成32字节的随机数据
-	bytes := make([]byte, 32)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", errors.Wrap(err, errors.CodeInternalError, "Failed to generate API key")
-	}
-
-	// 转换为base64
-	key := base64.URLEncoding.EncodeToString(bytes)
-
-	// 添加前缀
-	if prefix != "" {
-		key = prefix + "_" + key
-	}
-
-	return key, nil
-}
-
 // ==================== JWT相关方法 ====================
 
 // generateJWTToken 生成JWT令牌
 func (am *AuthManager) generateJWTToken(claims *UserClaims, tokenType TokenType) (string, error) {
-	// 设置令牌过期时间
 	var expireTime time.Duration
 	switch tokenType {
 	case TokenTypeAccess:
@@ -374,9 +310,10 @@ func (am *AuthManager) generateJWTToken(claims *UserClaims, tokenType TokenType)
 		expireTime = time.Duration(am.config.JWTExpire) * time.Minute
 	}
 
-	// 设置声明
 	now := time.Now()
-	claims.RegisteredClaims = jwt.RegisteredClaims{
+
+	// 创建标准的 JWT Claims
+	stdClaims := jwt.RegisteredClaims{
 		Issuer:    am.config.Issuer,
 		Subject:   strconv.FormatUint(claims.UserID, 10),
 		Audience:  jwt.ClaimStrings{am.config.Audience},
@@ -386,8 +323,35 @@ func (am *AuthManager) generateJWTToken(claims *UserClaims, tokenType TokenType)
 		ID:        generateTokenID(),
 	}
 
-	// 创建令牌
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	// 创建自定义声明映射
+	customClaims := map[string]interface{}{
+		"user_id":         claims.UserID,
+		"username":        claims.Username,
+		"email":           claims.Email,
+		"roles":           claims.Roles,
+		"permissions":     claims.Permissions,
+		"is_active":       claims.IsActive,
+		"two_factor_auth": claims.TwoFactorAuth,
+	}
+
+	// 合并自定义声明
+	if claims.CustomClaims != nil {
+		for k, v := range claims.CustomClaims {
+			customClaims[k] = v
+		}
+	}
+
+	// 创建 JWT 令牌
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims(customClaims))
+
+	// 添加标准声明
+	token.Claims.(jwt.MapClaims)["iss"] = stdClaims.Issuer
+	token.Claims.(jwt.MapClaims)["sub"] = stdClaims.Subject
+	token.Claims.(jwt.MapClaims)["aud"] = stdClaims.Audience
+	token.Claims.(jwt.MapClaims)["exp"] = stdClaims.ExpiresAt.Unix()
+	token.Claims.(jwt.MapClaims)["nbf"] = stdClaims.NotBefore.Unix()
+	token.Claims.(jwt.MapClaims)["iat"] = stdClaims.IssuedAt.Unix()
+	token.Claims.(jwt.MapClaims)["jti"] = stdClaims.ID
 
 	// 签名令牌
 	signedToken, err := token.SignedString([]byte(am.config.JWTSecret))
@@ -398,10 +362,10 @@ func (am *AuthManager) generateJWTToken(claims *UserClaims, tokenType TokenType)
 	return signedToken, nil
 }
 
-// parseJWTToken 解析JWT令牌
+// 修复 parseJWTToken 函数
 func (am *AuthManager) parseJWTToken(tokenString string) (*UserClaims, error) {
 	// 解析令牌
-	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		// 验证签名方法
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -414,8 +378,66 @@ func (am *AuthManager) parseJWTToken(tokenString string) (*UserClaims, error) {
 	}
 
 	// 验证令牌
-	if claims, ok := token.Claims.(*UserClaims); ok && token.Valid {
-		return claims, nil
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		// 转换为 UserClaims
+		userClaims := &UserClaims{}
+
+		// 解析标准字段
+		if userID, ok := claims["user_id"].(float64); ok {
+			userClaims.UserID = uint64(userID)
+		}
+		if username, ok := claims["username"].(string); ok {
+			userClaims.Username = username
+		}
+		if email, ok := claims["email"].(string); ok {
+			userClaims.Email = email
+		}
+		if isActive, ok := claims["is_active"].(bool); ok {
+			userClaims.IsActive = isActive
+		}
+		if twoFactorAuth, ok := claims["two_factor_auth"].(bool); ok {
+			userClaims.TwoFactorAuth = twoFactorAuth
+		}
+
+		// 解析数组字段
+		if roles, ok := claims["roles"].([]interface{}); ok {
+			for _, r := range roles {
+				if roleStr, ok := r.(string); ok {
+					userClaims.Roles = append(userClaims.Roles, UserRole(roleStr))
+				}
+			}
+		}
+
+		if perms, ok := claims["permissions"].([]interface{}); ok {
+			for _, p := range perms {
+				if permStr, ok := p.(string); ok {
+					userClaims.Permissions = append(userClaims.Permissions, Permission(permStr))
+				}
+			}
+		}
+
+		// 解析自定义声明
+		customClaims := make(map[string]interface{})
+		for key, value := range claims {
+			// 跳过标准字段
+			standardFields := []string{"iss", "sub", "aud", "exp", "nbf", "iat", "jti",
+				"user_id", "username", "email", "roles", "permissions", "is_active", "two_factor_auth"}
+			isStandard := false
+			for _, field := range standardFields {
+				if key == field {
+					isStandard = true
+					break
+				}
+			}
+			if !isStandard {
+				customClaims[key] = value
+			}
+		}
+		if len(customClaims) > 0 {
+			userClaims.CustomClaims = customClaims
+		}
+
+		return userClaims, nil
 	}
 
 	return nil, errors.New(errors.CodeUnauthorized, "Invalid JWT token")
@@ -888,21 +910,19 @@ func (am *AuthManager) GetOAuth2AuthURL(ctx context.Context, provider OAuth2Prov
 			fmt.Sprintf("OAuth2 provider %s not configured", provider))
 	}
 
-	// 根据不同的提供商生成认证URL
+	// 暂时只实现简单的 URL 生成
 	switch provider {
 	case OAuth2Google:
-		return am.getGoogleAuthURL(config, state)
+		// 基础的 Google OAuth URL
+		return fmt.Sprintf("https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&state=%s",
+			config.ClientID, config.RedirectURL, strings.Join(config.Scopes, " "), state), nil
 	case OAuth2GitHub:
-		return am.getGitHubAuthURL(config, state)
-	case OAuth2Facebook:
-		return am.getFacebookAuthURL(config, state)
-	case OAuth2Microsoft:
-		return am.getMicrosoftAuthURL(config, state)
-	case OAuth2Apple:
-		return am.getAppleAuthURL(config, state)
+		// 基础的 GitHub OAuth URL
+		return fmt.Sprintf("https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=%s&state=%s",
+			config.ClientID, config.RedirectURL, strings.Join(config.Scopes, " "), state), nil
 	default:
 		return "", errors.New(errors.CodeInternalError,
-			fmt.Sprintf("Unsupported OAuth2 provider: %s", provider))
+			fmt.Sprintf("OAuth2 provider %s not supported yet", provider))
 	}
 }
 

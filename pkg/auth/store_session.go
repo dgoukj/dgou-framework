@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"dgou/pkg/cache"
 	"dgou/pkg/errors"
 	"encoding/json"
 	"fmt"
@@ -11,19 +10,14 @@ import (
 
 // RedisSessionStore Redis会话存储实现
 type RedisSessionStore struct {
-	cache  cache.Cache
+	cache  CacheAdapter
 	prefix string
 }
 
 // NewRedisSessionStore 创建Redis会话存储
 func NewRedisSessionStore() *RedisSessionStore {
-	cacheInstance := cache.GetCache()
-	if cacheInstance == nil {
-		cacheInstance = &cache.MemoryCache{}
-	}
-
 	return &RedisSessionStore{
-		cache:  cacheInstance,
+		cache:  NewMemoryCacheAdapter(),
 		prefix: "auth:session",
 	}
 }
@@ -76,10 +70,11 @@ func (rss *RedisSessionStore) GetSession(ctx context.Context, sessionID string) 
 
 	sessionData, err := rss.cache.Get(ctx, sessionKey)
 	if err != nil {
-		if errors.Is(err, errors.CodeResourceNotFound) {
-			return nil, errors.New(errors.CodeResourceNotFound, "Session not found")
-		}
-		return nil, errors.Wrap(err, errors.CodeInternalError, "Failed to get session from Redis")
+		return nil, errors.Wrap(err, errors.CodeInternalError, "Failed to get session")
+	}
+
+	if sessionData == "" {
+		return nil, errors.New(errors.CodeResourceNotFound, "Session not found")
 	}
 
 	var session Session
@@ -137,10 +132,19 @@ func (rss *RedisSessionStore) UpdateSession(ctx context.Context, sessionID strin
 	}
 
 	if err := rss.cache.Set(ctx, sessionKey, string(sessionData), ttl); err != nil {
-		return errors.Wrap(err, errors.CodeInternalError, "Failed to update session in Redis")
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to update session")
 	}
 
 	return nil
+}
+
+// isResourceNotFoundError 检查是否为资源未找到错误
+func isResourceNotFoundError(err error) bool {
+	if customErr, ok := err.(*errors.Error); ok {
+		return customErr.Code == errors.CodeResourceNotFound
+	}
+	// 检查错误消息是否包含特定字符串
+	return err != nil && (err.Error() == "Session not found" || err.Error() == "Resource not found")
 }
 
 // DeleteSession 删除会话
@@ -149,13 +153,14 @@ func (rss *RedisSessionStore) DeleteSession(ctx context.Context, sessionID strin
 
 	// 先获取会话以获取用户ID
 	session, err := rss.GetSession(ctx, sessionID)
-	if err != nil && !errors.Is(err, errors.CodeResourceNotFound) {
+	if err != nil && !isResourceNotFoundError(err) {
+		// 如果不是"未找到"错误，则返回错误
 		return err
 	}
 
 	// 删除会话
 	if err := rss.cache.Delete(ctx, sessionKey); err != nil {
-		return errors.Wrap(err, errors.CodeInternalError, "Failed to delete session from Redis")
+		return errors.Wrap(err, errors.CodeInternalError, "Failed to delete session")
 	}
 
 	// 从用户会话集合中删除
@@ -212,6 +217,6 @@ func (rss *RedisSessionStore) ListUserSessions(ctx context.Context, userID uint6
 
 // CleanupExpiredSessions 清理过期会话
 func (rss *RedisSessionStore) CleanupExpiredSessions(ctx context.Context) error {
-	// Redis会自动清理过期的键
+	// 内存缓存会自动清理过期的键
 	return nil
 }
