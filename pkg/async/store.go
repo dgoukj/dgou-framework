@@ -123,7 +123,7 @@ func (s *TaskStore) Cleanup(maxAge time.Duration) int {
 	now := time.Now()
 	deletedCount := 0
 
-	for taskID, task := range s.tasks {
+	for _, task := range s.tasks {
 		// 只清理已完成的任务
 		if task.IsCompleted() {
 			completedAt := task.CompletedAt

@@ -6,9 +6,7 @@ import (
 	"context"
 	"dgou/pkg/errors"
 	"dgou/pkg/logger"
-	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -215,7 +213,7 @@ func (p *WorkerPool) Submit(task *Task) (string, error) {
 
 // SubmitAndWait 提交任务并等待完成
 func (p *WorkerPool) SubmitAndWait(task *Task, timeout time.Duration) (*TaskResult, error) {
-	taskID, err := p.Submit(task)
+	_, err := p.Submit(task)
 	if err != nil {
 		return nil, err
 	}
@@ -273,11 +271,11 @@ func (p *WorkerPool) GetStats() map[string]interface{} {
 		"idle_workers":     p.config.MaxWorkers - activeWorkers,
 		"queue_size":       p.taskQueue.Len(),
 		"max_queue_size":   p.config.MaxQueueSize,
-		"total_tasks":      p.metrics.totalTasks.Load(),
-		"completed_tasks":  p.metrics.completedTasks.Load(),
-		"failed_tasks":     p.metrics.failedTasks.Load(),
-		"queued_tasks":     p.metrics.queuedTasks.Load(),
-		"rejected_tasks":   p.metrics.rejectedTasks.Load(),
+		"total_tasks":      p.metrics.GetTotalTasks(),     // 使用 Get 方法
+		"completed_tasks":  p.metrics.GetCompletedTasks(), // 使用 Get 方法
+		"failed_tasks":     p.metrics.GetFailedTasks(),    // 使用 Get 方法
+		"queued_tasks":     p.metrics.GetQueuedTasks(),    // 使用 Get 方法
+		"rejected_tasks":   p.metrics.GetRejectedTasks(),  // 使用 Get 方法
 		"avg_process_time": p.metrics.GetAverageProcessTime(),
 		"task_states":      p.taskStore.GetStats(),
 	}
@@ -322,7 +320,7 @@ func (p *WorkerPool) dispatchTasks() {
 	}
 
 	// 查找空闲的工作协程
-	for i, worker := range p.workers {
+	for _, worker := range p.workers {
 		if !worker.isWorking {
 			// 从优先队列中获取最高优先级的任务
 			if p.taskQueue.Len() > 0 {

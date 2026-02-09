@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
@@ -31,6 +32,7 @@ type Config struct {
 	Log      LogConfig      `mapstructure:"log"`
 	Monitor  MonitorConfig  `mapstructure:"monitor"`
 	Security SecurityConfig `mapstructure:"security"`
+	Async    AsyncConfig    `mapstructure:"async"`
 }
 
 // ServerConfig 服务配置
@@ -150,6 +152,16 @@ type RateLimitConfig struct {
 	RedisPassword    string `yaml:"redis_password" json:"redis_password"`
 	RedisDB          int    `yaml:"redis_db" json:"redis_db"`
 	FailOpen         bool   `yaml:"fail_open" json:"fail_open"` // Redis故障时是否允许请求通过
+}
+
+// 异步配置
+type AsyncConfig struct {
+	MaxWorkers     int           `mapstructure:"max_workers"`
+	MaxQueueSize   int           `mapstructure:"max_queue_size"`
+	WorkerIdleTime time.Duration `mapstructure:"worker_idle_time"`
+	EnableMetrics  bool          `mapstructure:"enable_metrics"`
+	TaskRetries    int           `mapstructure:"task_retries"`
+	TaskTimeout    time.Duration `mapstructure:"task_timeout"`
 }
 
 // LoadConfig 加载配置（线程安全单例模式）
@@ -320,6 +332,14 @@ func createDefaultConfig() *Config {
 			EnableCSRF:      false,
 			EnableXSSFilter: true,
 			EnableHSTS:      true,
+		},
+		Async: AsyncConfig{
+			MaxWorkers:     100,
+			MaxQueueSize:   10000,
+			WorkerIdleTime: 30 * time.Second,
+			EnableMetrics:  true,
+			TaskRetries:    3,
+			TaskTimeout:    30 * time.Second,
 		},
 	}
 }

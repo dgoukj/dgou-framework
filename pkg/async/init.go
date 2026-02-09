@@ -107,11 +107,6 @@ func IsInitialized() bool {
 	return globalTaskManager != nil && isInitialized
 }
 
-// NewTask 创建新任务（使用默认管理器）
-func NewTask(name string, handler TaskHandler, params interface{}) *Task {
-	return NewTask(name, handler, params)
-}
-
 // Submit 提交任务（使用默认管理器）
 func Submit(task *Task) (string, error) {
 	manager := GetGlobalTaskManager()
@@ -401,7 +396,7 @@ func (e *AsyncError) Error() string {
 // 初始化检查
 func init() {
 	// 注册配置验证器
-	config.RegisterValidator(func(cfg *config.Config) error {
+	RegisterValidator(func(cfg *config.Config) error {
 		// 验证异步配置
 		if cfg.Async.MaxWorkers <= 0 {
 			logger.Warn("Async max workers not configured or invalid, using default")
@@ -413,7 +408,7 @@ func init() {
 	})
 
 	// 注册优雅关闭处理器
-	config.RegisterShutdownHandler(func() error {
+	RegisterShutdownHandler(func() error {
 		return Stop()
 	})
 

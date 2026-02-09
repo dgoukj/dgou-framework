@@ -15,6 +15,13 @@ type PriorityItem struct {
 // PriorityQueue 优先队列
 type PriorityQueue []*PriorityItem
 
+// NewPriorityQueue 创建新的优先队列
+func NewPriorityQueue() *PriorityQueue {
+	pq := make(PriorityQueue, 0)
+	heap.Init(&pq)
+	return &pq
+}
+
 func (pq PriorityQueue) Len() int { return len(pq) }
 
 func (pq PriorityQueue) Less(i, j int) bool {

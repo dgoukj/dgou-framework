@@ -2,7 +2,6 @@
 package async
 
 import (
-	"context"
 	"dgou/pkg/config"
 	"dgou/pkg/errors"
 	"dgou/pkg/logger"
@@ -230,8 +229,28 @@ func GetTaskByID(taskID string) (*Task, error) {
 	return GetTaskManager().GetTask(taskID)
 }
 
-// CancelTask 取消任务（快捷方式）
-func CancelTask(taskID string) error {
+// CancelTask 取消任务（TaskManager 的方法）
+func (m *TaskManager) CancelTask(taskID string) error {
+	// 在默认协程池中尝试取消
+	if err := m.defaultPool.CancelTask(taskID); err == nil {
+		return nil
+	}
+
+	// 在其他协程池中尝试取消
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, pool := range m.pools {
+		if err := pool.CancelTask(taskID); err == nil {
+			return nil
+		}
+	}
+
+	return errors.New(errors.CodeResourceNotFound, "Task not found: "+taskID)
+}
+
+// CancelTaskInternal 取消任务（内部快捷方式，重命名避免冲突）
+func CancelTaskInternal(taskID string) error {
 	// 在所有协程池中查找并取消任务
 	manager := GetTaskManager()
 
