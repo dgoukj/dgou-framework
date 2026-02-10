@@ -135,8 +135,27 @@ type RedisConfig struct {
 type QueueConfig struct {
 	Broker     string `mapstructure:"broker"`
 	BufferSize int    `mapstructure:"buffer_size"`
-	WorkerNum  int    `mapstructure:"worker_num"`  // 工作协程数
-	RetryTimes int    `mapstructure:"retry_times"` // 重试次数
+	WorkerNum  int    `mapstructure:"worker_num"`
+	RetryTimes int    `mapstructure:"retry_times"`
+	// 新增字段
+	EnableDeadLetter     bool          `mapstructure:"enable_dead_letter"`
+	EnableDelayedQueue   bool          `mapstructure:"enable_delayed_queue"`
+	EnableRetry          bool          `mapstructure:"enable_retry"`
+	MaxRetries           int           `mapstructure:"max_retries"`
+	DeadLetterExchange   string        `mapstructure:"dead_letter_exchange"`
+	DeadLetterQueue      string        `mapstructure:"dead_letter_queue"`
+	DeadLetterRoutingKey string        `mapstructure:"dead_letter_routing_key"`
+	DeadLetterTTL        time.Duration `mapstructure:"dead_letter_ttl"`
+	DeadLetterMaxLength  int           `mapstructure:"dead_letter_max_length"`
+	DelayedExchange      string        `mapstructure:"delayed_exchange"`
+	DelayedQueuePrefix   string        `mapstructure:"delayed_queue_prefix"`
+	DelayedMaxDelay      time.Duration `mapstructure:"delayed_max_delay"`
+	RetryInitialDelay    time.Duration `mapstructure:"retry_initial_delay"`
+	RetryMaxDelay        time.Duration `mapstructure:"retry_max_delay"`
+	RetryStrategy        string        `mapstructure:"retry_strategy"`
+	RetryBackoffFactor   float64       `mapstructure:"retry_backoff_factor"`
+	RetryJitter          bool          `mapstructure:"retry_jitter"`
+	RetryJitterFactor    float64       `mapstructure:"retry_jitter_factor"`
 }
 
 // UploadConfig 上传配置
@@ -195,7 +214,25 @@ type OSSConfig struct {
 
 // RabbitMQConfig RabbitMQ配置
 type RabbitMQConfig struct {
-	URL        string                 `mapstructure:"url"`
+	URL            string        `mapstructure:"url"`
+	Host           string        `mapstructure:"host"`
+	Port           int           `mapstructure:"port"`
+	Username       string        `mapstructure:"username"`
+	Password       string        `mapstructure:"password"`
+	Vhost          string        `mapstructure:"vhost"`
+	Heartbeat      int           `mapstructure:"heartbeat"`
+	ConnectionName string        `mapstructure:"connection_name"`
+	MaxReconnect   int           `mapstructure:"max_reconnect"`
+	ReconnectDelay time.Duration `mapstructure:"reconnect_delay"`
+	PrefetchCount  int           `mapstructure:"prefetch_count"`
+	PrefetchSize   int           `mapstructure:"prefetch_size"`
+	GlobalPrefetch bool          `mapstructure:"global_prefetch"`
+	EnableTLS      bool          `mapstructure:"enable_tls"`
+	TLSCertFile    string        `mapstructure:"tls_cert_file"`
+	TLSKeyFile     string        `mapstructure:"tls_key_file"`
+	TLSCAFile      string        `mapstructure:"tls_ca_file"`
+	EnableMetrics  bool          `mapstructure:"enable_metrics"`
+	// 原有字段
 	Exchange   string                 `mapstructure:"exchange"`
 	QueueName  string                 `mapstructure:"queue_name"`
 	RoutingKey string                 `mapstructure:"routing_key"`

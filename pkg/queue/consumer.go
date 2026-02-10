@@ -218,7 +218,7 @@ func (c *Consumer) processDelivery(ctx context.Context, delivery amqp.Delivery) 
 		c.recordProcessing(processErr == nil, time.Since(startTime))
 
 		if processErr != nil {
-			c.metrics.recordError()
+			c.recordError()
 			logger.Error("Message processing failed",
 				logger.String("message_id", msg.ID),
 				logger.String("queue", c.queueName),
@@ -384,7 +384,7 @@ func (c *Consumer) shouldRetry(delivery amqp.Delivery, processErr error) bool {
 	}
 
 	// 检查错误类型，某些错误不应该重试
-	if errors.Is(processErr, errors.CodeValidationFailed) {
+	if err, ok := processErr.(*errors.Error); ok && err.Code == errors.CodeValidationFailed {
 		// 验证错误不应该重试
 		return false
 	}
@@ -498,4 +498,25 @@ func (c *Consumer) GetMetrics() *ConsumerMetrics {
 		AvgProcessingTime: c.metrics.AvgProcessingTime,
 		LastConsumeTime:   c.metrics.LastConsumeTime,
 	}
+}
+
+// recordAck 记录消息确认
+func (m *ConsumerMetrics) recordAck() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.MessagesAcked++
+}
+
+// recordNack 记录消息拒绝并重新入队
+func (m *ConsumerMetrics) recordNack() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.MessagesNacked++
+}
+
+// recordReject 记录消息拒绝并丢弃
+func (m *ConsumerMetrics) recordReject() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.MessagesRejected++
 }

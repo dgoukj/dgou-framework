@@ -7,9 +7,8 @@ import (
 	"dgou/pkg/errors"
 	"dgou/pkg/logger"
 	"fmt"
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"sync"
-	"time"
 )
 
 // QueueManager 队列管理器

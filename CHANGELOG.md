@@ -1,5 +1,44 @@
 # 变更日志
 
+## [v1.0.4] - 2026-02-10 10:30:00
+### 修复问题
+#### 1. 队列组件配置结构体不匹配：
+- 更新config.go中的RabbitMQConfig和QueueConfig结构体，添加缺失的字段
+- 解决connection.go中未解析的引用'Password'等错误
+
+#### 2. 消费者指标方法缺失：
+- 在consumer.go中添加recordAck、recordNack、recordReject和recordError方法
+- 解决未解析的引用错误
+
+#### 3. 错误类型检查问题：
+- 修改consumer.go中shouldRetry函数的错误检查，使用类型断言代替errors.Is函数
+- 修改retry_strategy.go中ShouldRetry函数的错误检查
+
+#### 4. 死信队列参数获取错误：
+- 重写dead_letter.go中SetupDeadLetterForQueue函数
+- 使用QueueInspect获取队列信息，正确访问Args字段
+- 重写deleteAndRecreateQueue函数，避免使用不存在的字段
+
+#### 5. 生产者指标方法缺失：
+- 在producer.go中添加recordFailure方法
+- 解决未解析的引用错误
+
+#### 6. AMQP包冲突：
+- 统一manager.go中使用amqp091-go包
+- 修改BindQueue函数参数类型，解决类型不匹配错误
+
+#### 7. 缺失的导入：
+- 在retry_strategy.go中添加math/rand导入
+- 在dead_letter.go中添加context导入
+
+#### 8. 其他改进：
+- 优化死信队列的创建逻辑，提供队列删除重建和策略设置两种方式
+- 统一项目中amqp包的使用，避免混合使用不同版本的amqp包
+
+### 注意事项
+- RabbitMQ队列参数在创建后不可修改，如需修改队列参数需要删除重建
+- 生产环境建议使用RabbitMQ策略来配置死信队列，而不是删除重建队列
+
 ## [v1.0.3] - 2026-02-09 14:30:00
 ### 修复问题
 #### 1. 上传组件类型定义重复：

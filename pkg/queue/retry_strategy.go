@@ -4,8 +4,8 @@ package queue
 import (
 	"dgou/pkg/errors"
 	"dgou/pkg/logger"
-	"fmt"
 	"math"
+	"math/rand"
 	"strings"
 	"time"
 )
@@ -204,14 +204,12 @@ func (rm *RetryManager) ShouldRetry(err error, retryCount int) bool {
 	}
 
 	// 检查错误类型，某些错误不应该重试
-	if errors.Is(err, errors.CodeValidationFailed) {
-		// 验证错误不应该重试
-		return false
-	}
-
-	if errors.Is(err, errors.CodeResourceNotFound) {
-		// 资源不存在错误不应该重试
-		return false
+	if customErr, ok := err.(*errors.Error); ok {
+		switch customErr.Code {
+		case errors.CodeValidationFailed, errors.CodeResourceNotFound:
+			// 验证错误或资源不存在错误不应该重试
+			return false
+		}
 	}
 
 	// 检查错误消息中是否包含不应重试的关键字

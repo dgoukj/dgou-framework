@@ -73,7 +73,9 @@ func (p *Producer) Publish(ctx context.Context, msg *Message) error {
 	p.recordPublish(err == nil, time.Since(startTime))
 
 	if err != nil {
-		p.metrics.recordFailure()
+		// 这里调用 recordFailure 方法
+		p.metrics.recordFailure() // 确保 p.metrics 不是 nil
+
 		return errors.Wrap(err, errors.CodeInternalError,
 			fmt.Sprintf("Failed to publish message to exchange %s", p.exchange))
 	}
@@ -286,4 +288,11 @@ func (p *Producer) SetRoutingKey(routingKey string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.routingKey = routingKey
+}
+
+// recordFailure 记录发布失败
+func (m *ProducerMetrics) recordFailure() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.MessagesFailed++
 }

@@ -2,8 +2,11 @@
 package queue
 
 import (
+	"context"
 	"dgou/pkg/logger"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -141,56 +144,6 @@ func (m *DeadLetterManager) createDeadLetterResources() error {
 	return nil
 }
 
-// SetupDeadLetterForQueue 为队列设置死信
-func (m *DeadLetterManager) SetupDeadLetterForQueue(queueName string, maxRetries int) error {
-	if !m.config.Enabled {
-		return nil
-	}
-
-	channel, err := m.connection.GetChannel()
-	if err != nil {
-		return err
-	}
-
-	// 获取队列当前配置
-	queue, err := channel.QueueDeclarePassive(
-		queueName,
-		true,  // durable
-		false, // autoDelete
-		false, // exclusive
-		false, // noWait
-		nil,   // args
-	)
-
-	if err != nil {
-		return err
-	}
-
-	// 更新队列配置，添加死信参数
-	args := amqp.Table{}
-	if queue.Arguments != nil {
-		for k, v := range queue.Arguments {
-			args[k] = v
-		}
-	}
-
-	// 添加死信配置
-	args["x-dead-letter-exchange"] = m.dlxExchange
-	args["x-dead-letter-routing-key"] = fmt.Sprintf("%s.dlx", queueName)
-	args["x-max-retries"] = int32(maxRetries)
-
-	// 重新声明队列（RabbitMQ不支持直接修改队列参数，需要删除重建）
-	// 注意：这会删除队列中的消息，生产环境中需要谨慎操作
-
-	logger.Info("Dead letter configured for queue",
-		logger.String("queue", queueName),
-		logger.String("dlx_exchange", m.dlxExchange),
-		logger.Int("max_retries", maxRetries),
-	)
-
-	return nil
-}
-
 // SendToDeadLetter 发送消息到死信队列
 func (m *DeadLetterManager) SendToDeadLetter(msg *Message, reason string) error {
 	if !m.config.Enabled {
@@ -313,4 +266,177 @@ func (m *DeadLetterManager) Stop() error {
 
 	logger.Info("Dead letter manager stopped")
 	return nil
+}
+
+// SetupDeadLetterForQueue 为队列设置死信
+func (m *DeadLetterManager) SetupDeadLetterForQueue(queueName string, maxRetries int) error {
+	if !m.config.Enabled {
+		return nil
+	}
+
+	channel, err := m.connection.GetChannel()
+	if err != nil {
+		return err
+	}
+
+	// 尝试声明队列（如果队列不存在，会创建新队列）
+	// 如果队列已存在，声明时会检查参数是否匹配，不匹配会报错
+	args := amqp.Table{
+		"x-dead-letter-exchange":    m.dlxExchange,
+		"x-dead-letter-routing-key": fmt.Sprintf("%s.dlx", queueName),
+		"x-max-retries":             int32(maxRetries),
+	}
+
+	_, err = channel.QueueDeclare(
+		queueName,
+		true,  // durable
+		false, // autoDelete
+		false, // exclusive
+		false, // noWait
+		args,
+	)
+
+	if err != nil {
+		// 如果队列已存在且参数不匹配，尝试获取队列信息
+		queue, inspectErr := channel.QueueInspect(queueName)
+		if inspectErr != nil {
+			return fmt.Errorf("failed to declare queue %s: %w", queueName, err)
+		}
+
+		// 队列已存在，记录警告
+		logger.Warn("Queue already exists with different parameters",
+			logger.String("queue", queueName),
+			logger.Int("messages", queue.Messages),
+			logger.Int("consumers", queue.Consumers),
+		)
+
+		// 无法修改已存在队列的参数，RabbitMQ不支持此操作
+		// 建议使用策略或重新创建队列
+		return fmt.Errorf("queue %s already exists with different parameters. "+
+			"Consider using RabbitMQ policies or recreating the queue", queueName)
+	}
+
+	logger.Info("Dead letter configured for queue",
+		logger.String("queue", queueName),
+		logger.String("dlx_exchange", m.dlxExchange),
+		logger.Int("max_retries", maxRetries),
+	)
+
+	return nil
+}
+
+// deleteAndRecreateQueue 删除并重新创建队列
+func (m *DeadLetterManager) deleteAndRecreateQueue(channel *amqp.Channel, queueName string, args amqp.Table) error {
+	// 获取队列信息
+	queue, err := channel.QueueInspect(queueName)
+	if err != nil {
+		return fmt.Errorf("failed to inspect queue %s: %w", queueName, err)
+	}
+
+	// 记录警告
+	logger.Warn("Deleting and recreating queue to apply dead letter configuration",
+		logger.String("queue", queueName),
+		logger.Int("message_count", queue.Messages),
+		logger.Int("consumer_count", queue.Consumers),
+	)
+
+	// 检查队列是否为空且无消费者
+	if queue.Messages > 0 || queue.Consumers > 0 {
+		return fmt.Errorf("cannot delete queue %s: it has %d messages and %d consumers",
+			queueName, queue.Messages, queue.Consumers)
+	}
+
+	// 删除队列
+	_, err = channel.QueueDelete(
+		queueName,
+		false, // ifUnused
+		false, // ifEmpty
+		false, // noWait
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete queue: %w", err)
+	}
+
+	// 重新创建队列
+	_, err = channel.QueueDeclare(
+		queueName,
+		true,  // durable (使用默认值)
+		false, // autoDelete (使用默认值)
+		false, // exclusive (使用默认值)
+		false, // noWait
+		args,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to recreate queue: %w", err)
+	}
+
+	logger.Info("Queue recreated with dead letter configuration",
+		logger.String("queue", queueName),
+		logger.String("dlx_exchange", m.dlxExchange),
+	)
+
+	return nil
+}
+
+// createQueueWithDeadLetter 创建带死信配置的队列
+func (m *DeadLetterManager) createQueueWithDeadLetter(channel *amqp.Channel, queueName string, maxRetries int) error {
+	args := amqp.Table{
+		"x-dead-letter-exchange":    m.dlxExchange,
+		"x-dead-letter-routing-key": fmt.Sprintf("%s.dlx", queueName),
+		"x-max-retries":             int32(maxRetries),
+	}
+
+	_, err := channel.QueueDeclare(
+		queueName,
+		true,  // durable
+		false, // autoDelete
+		false, // exclusive
+		false, // noWait
+		args,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to create queue with dead letter: %w", err)
+	}
+
+	logger.Info("Queue created with dead letter configuration",
+		logger.String("queue", queueName),
+		logger.String("dlx_exchange", m.dlxExchange),
+		logger.Int("max_retries", maxRetries),
+	)
+
+	return nil
+}
+
+// applyDeadLetterPolicy 使用RabbitMQ策略设置死信（推荐）
+func (m *DeadLetterManager) applyDeadLetterPolicy(queueName string, maxRetries int) error {
+	// 注意：RabbitMQ策略需要通过管理API或CLI设置
+	// 这里提供一个占位符，实际实现需要调用RabbitMQ管理API
+
+	logger.Info("Please set dead letter policy via RabbitMQ management",
+		logger.String("queue", queueName),
+		logger.String("policy_name", fmt.Sprintf("dlx-policy-%s", queueName)),
+		logger.String("policy_pattern", fmt.Sprintf("^%s$", queueName)),
+		logger.String("policy_definition", fmt.Sprintf(`{
+            "dead-letter-exchange": "%s",
+            "dead-letter-routing-key": "%s.dlx",
+            "max-retries": %d
+        }`, m.dlxExchange, queueName, maxRetries)),
+	)
+
+	return nil
+}
+
+// shouldDeleteAndRecreate 判断是否应该删除重建队列
+func (m *DeadLetterManager) shouldDeleteAndRecreate(queueName string) bool {
+	// 在生产环境中，应该使用策略而不是删除重建
+	// 这里可以根据配置决定是否允许删除重建
+	if m.config.AutoCreate {
+		// 只有在新创建的队列时才允许删除重建
+		return false
+	}
+
+	// 可以根据环境变量或配置决定
+	envValue := os.Getenv("ALLOW_QUEUE_RECREATE")
+	return strings.ToLower(envValue) == "true"
 }
