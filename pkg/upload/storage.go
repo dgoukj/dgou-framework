@@ -5,56 +5,83 @@ import (
 	"context"
 	"io"
 	"mime/multipart"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // StorageType 存储类型
 type StorageType string
 
 const (
-	StorageTypeLocal StorageType = "local" // 本地存储
-	StorageTypeOSS   StorageType = "oss"   // OSS存储
+	StorageTypeLocal StorageType = "local"
+	StorageTypeOSS   StorageType = "oss"
 )
 
-// FileInfo 文件信息
-type FileInfo struct {
-	ID             string                 `json:"id"`                    // 文件ID
-	Name           string                 `json:"name"`                  // 原始文件名
-	StorageName    string                 `json:"storage_name"`          // 存储文件名
-	Path           string                 `json:"path"`                  // 存储路径
-	URL            string                 `json:"url"`                   // 访问URL
-	FullURL        string                 `json:"full_url"`              // 完整访问URL（带CDN）
-	Size           int64                  `json:"size"`                  // 文件大小（字节）
-	MimeType       string                 `json:"mime_type"`             // MIME类型
-	Extension      string                 `json:"extension"`             // 文件扩展名
-	MD5            string                 `json:"md5,omitempty"`         // MD5值
-	SHA256         string                 `json:"sha256,omitempty"`      // SHA256值
-	StorageType    StorageType            `json:"storage_type"`          // 存储类型
-	UploaderID     string                 `json:"uploader_id,omitempty"` // 上传者ID
-	UploaderIP     string                 `json:"uploader_ip,omitempty"` // 上传者IP
-	IsPublic       bool                   `json:"is_public"`             // 是否公开
-	IsVirusScanned bool                   `json:"is_virus_scanned"`      // 是否已扫描病毒
-	IsVirusFree    bool                   `json:"is_virus_free"`         // 是否无病毒
-	ScanResult     string                 `json:"scan_result,omitempty"` // 扫描结果
-	CreatedAt      time.Time              `json:"created_at"`            // 创建时间
-	ExpiredAt      *time.Time             `json:"expired_at,omitempty"`  // 过期时间
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`    // 元数据
-}
+// FileType 文件类型
+type FileType string
+
+const (
+	FileTypeImage    FileType = "image"
+	FileTypeDocument FileType = "document"
+	FileTypeVideo    FileType = "video"
+	FileTypeAudio    FileType = "audio"
+	FileTypeArchive  FileType = "archive"
+	FileTypeOther    FileType = "other"
+)
 
 // StorageConfig 存储配置
 type StorageConfig struct {
-	Type            StorageType `mapstructure:"type"`              // 存储类型
-	BasePath        string      `mapstructure:"base_path"`         // 基础路径（本地存储）
-	BaseURL         string      `mapstructure:"base_url"`          // 基础URL
-	CDNURL          string      `mapstructure:"cdn_url"`           // CDN URL
-	AccessKeyID     string      `mapstructure:"access_key_id"`     // OSS AccessKey ID
-	AccessKeySecret string      `mapstructure:"access_key_secret"` // OSS AccessKey Secret
-	Endpoint        string      `mapstructure:"endpoint"`          // OSS Endpoint
-	Bucket          string      `mapstructure:"bucket"`            // OSS Bucket
-	Region          string      `mapstructure:"region"`            // OSS Region
-	MaxFileSize     int64       `mapstructure:"max_file_size"`     // 最大文件大小（字节）
-	UseHTTPS        bool        `mapstructure:"use_https"`         // 是否使用HTTPS
-	EnableCDN       bool        `mapstructure:"enable_cdn"`        // 是否启用CDN
+	Type            StorageType `mapstructure:"type"`
+	BasePath        string      `mapstructure:"base_path"`
+	BaseURL         string      `mapstructure:"base_url"`
+	CDNURL          string      `mapstructure:"cdn_url"`
+	AccessKeyID     string      `mapstructure:"access_key_id"`
+	AccessKeySecret string      `mapstructure:"access_key_secret"`
+	Endpoint        string      `mapstructure:"endpoint"`
+	Bucket          string      `mapstructure:"bucket"`
+	Region          string      `mapstructure:"region"`
+	MaxFileSize     int64       `mapstructure:"max_file_size"`
+	UseHTTPS        bool        `mapstructure:"use_https"`
+	EnableCDN       bool        `mapstructure:"enable_cdn"`
+}
+
+// ValidationConfig 验证配置
+type ValidationConfig struct {
+	AllowedTypes      []FileType `mapstructure:"allowed_types"`
+	AllowedExtensions []string   `mapstructure:"allowed_extensions"`
+	AllowedMimeTypes  []string   `mapstructure:"allowed_mime_types"`
+	MaxFileSize       int64      `mapstructure:"max_file_size"`
+	MinFileSize       int64      `mapstructure:"min_file_size"`
+	MaxFileNameLength int        `mapstructure:"max_file_name_length"`
+	ValidateVirus     bool       `mapstructure:"validate_virus"`
+	ScanTimeout       int        `mapstructure:"scan_timeout"`
+}
+
+// FileInfo 文件信息
+type FileInfo struct {
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	StorageName    string                 `json:"storage_name"`
+	Path           string                 `json:"path"`
+	URL            string                 `json:"url"`
+	FullURL        string                 `json:"full_url"`
+	Size           int64                  `json:"size"`
+	MimeType       string                 `json:"mime_type"`
+	Extension      string                 `json:"extension"`
+	MD5            string                 `json:"md5,omitempty"`
+	SHA256         string                 `json:"sha256,omitempty"`
+	StorageType    StorageType            `json:"storage_type"`
+	UploaderID     string                 `json:"uploader_id,omitempty"`
+	UploaderIP     string                 `json:"uploader_ip,omitempty"`
+	IsPublic       bool                   `json:"is_public"`
+	IsVirusScanned bool                   `json:"is_virus_scanned"`
+	IsVirusFree    bool                   `json:"is_virus_free"`
+	ScanResult     string                 `json:"scan_result,omitempty"`
+	CreatedAt      time.Time              `json:"created_at"`
+	ExpiredAt      *time.Time             `json:"expired_at,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // Storage 存储接口
@@ -88,4 +115,79 @@ type Storage interface {
 
 	// Move 移动文件
 	Move(ctx context.Context, srcPath, dstPath string) error
+}
+
+// generateFileID 生成文件ID（公共函数）
+func generateFileID() string {
+	return uuid.New().String()
+}
+
+// 文件类型检测辅助函数
+func detectFileTypeByMime(mimeType string) FileType {
+	switch {
+	case mimeType == "":
+		return FileTypeOther
+	case strings.HasPrefix(mimeType, "image/"):
+		return FileTypeImage
+	case strings.HasPrefix(mimeType, "video/"):
+		return FileTypeVideo
+	case strings.HasPrefix(mimeType, "audio/"):
+		return FileTypeAudio
+	case mimeType == "application/pdf" ||
+		strings.HasPrefix(mimeType, "application/msword") ||
+		strings.HasPrefix(mimeType, "application/vnd.ms-excel") ||
+		strings.HasPrefix(mimeType, "application/vnd.ms-powerpoint") ||
+		strings.HasPrefix(mimeType, "application/vnd.openxmlformats"):
+		return FileTypeDocument
+	case mimeType == "application/zip" ||
+		mimeType == "application/x-rar-compressed" ||
+		mimeType == "application/x-tar" ||
+		mimeType == "application/gzip":
+		return FileTypeArchive
+	default:
+		return FileTypeOther
+	}
+}
+
+// 文件类型检测辅助函数（通过扩展名）
+func detectFileTypeByExt(ext string) FileType {
+	ext = strings.ToLower(strings.TrimPrefix(ext, "."))
+
+	imageExts := []string{"jpg", "jpeg", "png", "gif", "bmp", "webp", "svg"}
+	videoExts := []string{"mp4", "avi", "mov", "wmv", "flv", "mkv"}
+	audioExts := []string{"mp3", "wav", "ogg", "flac", "aac"}
+	documentExts := []string{"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt"}
+	archiveExts := []string{"zip", "rar", "7z", "tar", "gz"}
+
+	for _, e := range imageExts {
+		if e == ext {
+			return FileTypeImage
+		}
+	}
+
+	for _, e := range videoExts {
+		if e == ext {
+			return FileTypeVideo
+		}
+	}
+
+	for _, e := range audioExts {
+		if e == ext {
+			return FileTypeAudio
+		}
+	}
+
+	for _, e := range documentExts {
+		if e == ext {
+			return FileTypeDocument
+		}
+	}
+
+	for _, e := range archiveExts {
+		if e == ext {
+			return FileTypeArchive
+		}
+	}
+
+	return FileTypeOther
 }

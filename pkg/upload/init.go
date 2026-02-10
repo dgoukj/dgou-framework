@@ -7,6 +7,7 @@ import (
 	"dgou/pkg/logger"
 	"mime/multipart"
 	"sync"
+	"time"
 )
 
 var (
@@ -40,15 +41,33 @@ func Init() error {
 		logger.Warn("Config not found, using default configuration")
 		cfg = &config.Config{
 			Upload: config.UploadConfig{
-				StorageType:      "local",
-				BasePath:         "./uploads",
-				BaseURL:          "http://localhost:8080/uploads",
-				MaxFileSize:      10 * 1024 * 1024, // 10MB
-				AllowedTypes:     []string{"image", "document"},
-				AllowedMimeTypes: []string{"image/jpeg", "image/png", "application/pdf"},
-				ChunkEnabled:     true,
-				ChunkSize:        5 * 1024 * 1024, // 5MB
-				EnableVirusScan:  false,
+				StorageType:       "local",
+				BasePath:          "./uploads",
+				BaseURL:           "http://localhost:8080/uploads",
+				MaxFileSize:       10 * 1024 * 1024, // 10MB
+				AllowedTypes:      []string{"image", "document"},
+				AllowedMimeTypes:  []string{"image/jpeg", "image/png", "application/pdf"},
+				AllowedExtensions: []string{".jpg", ".jpeg", ".png", ".pdf", ".doc", ".docx"},
+				ChunkEnabled:      true,
+				ChunkSize:         5 * 1024 * 1024, // 5MB
+				MaxChunks:         1000,
+				TempDir:           "/tmp/upload_chunks",
+				CleanupInterval:   30 * time.Minute,
+				MaxTempFileAge:    24 * time.Hour,
+				EnableResumable:   true,
+				EnableVirusScan:   false,
+				EnableCDN:         false,
+				CDNURL:            "",
+				AccessKeyID:       "",
+				AccessKeySecret:   "",
+				Endpoint:          "",
+				Bucket:            "",
+				Region:            "",
+				UseHTTPS:          false,
+				MinFileSize:       0,
+				MaxFileNameLength: 255,
+				ValidateVirus:     false,
+				ScanTimeout:       30,
 			},
 		}
 	}
@@ -105,7 +124,7 @@ func SetDefaultManager(manager *UploadManager) {
 // SetDefaultService 设置默认上传服务
 func SetDefaultService(service *UploadService) {
 	serviceMutex.Lock()
-	defer serviceMutex.Unlock()
+	defer serviceMutex.RUnlock()
 	defaultService = service
 }
 
@@ -271,12 +290,12 @@ func Stop() error {
 }
 
 // GetStorageType 获取当前存储类型
-func GetStorageType() StorageType {
+func GetStorageType() string {
 	manager := GetDefaultManager()
 	if manager == nil {
-		return StorageTypeLocal
+		return string(StorageTypeLocal)
 	}
-	return manager.storage.Type()
+	return string(manager.storage.Type())
 }
 
 // IsChunkUploadEnabled 检查分片上传是否启用
@@ -307,12 +326,17 @@ func GetMaxFileSize() int64 {
 }
 
 // GetAllowedTypes 获取允许的文件类型
-func GetAllowedTypes() []FileType {
+func GetAllowedTypes() []string {
 	manager := GetDefaultManager()
 	if manager == nil {
-		return []FileType{FileTypeImage, FileTypeDocument}
+		return []string{string(FileTypeImage), string(FileTypeDocument)}
 	}
-	return manager.config.ValidationConfig.AllowedTypes
+	// 将FileType转换为字符串
+	var allowedTypes []string
+	for _, ft := range manager.config.ValidationConfig.AllowedTypes {
+		allowedTypes = append(allowedTypes, string(ft))
+	}
+	return allowedTypes
 }
 
 // NewError 创建上传组件错误

@@ -10,30 +10,6 @@ import (
 	"strings"
 )
 
-// FileType 文件类型
-type FileType string
-
-const (
-	FileTypeImage    FileType = "image"    // 图片
-	FileTypeDocument FileType = "document" // 文档
-	FileTypeVideo    FileType = "video"    // 视频
-	FileTypeAudio    FileType = "audio"    // 音频
-	FileTypeArchive  FileType = "archive"  // 压缩包
-	FileTypeOther    FileType = "other"    // 其他
-)
-
-// ValidationConfig 验证配置
-type ValidationConfig struct {
-	AllowedTypes      []FileType `mapstructure:"allowed_types"`        // 允许的文件类型
-	AllowedExtensions []string   `mapstructure:"allowed_extensions"`   // 允许的扩展名
-	AllowedMimeTypes  []string   `mapstructure:"allowed_mime_types"`   // 允许的MIME类型
-	MaxFileSize       int64      `mapstructure:"max_file_size"`        // 最大文件大小（字节）
-	MinFileSize       int64      `mapstructure:"min_file_size"`        // 最小文件大小（字节）
-	MaxFileNameLength int        `mapstructure:"max_file_name_length"` // 最大文件名长度
-	ValidateVirus     bool       `mapstructure:"validate_virus"`       // 是否验证病毒
-	ScanTimeout       int        `mapstructure:"scan_timeout"`         // 病毒扫描超时（秒）
-}
-
 // Validator 文件验证器
 type Validator struct {
 	config *ValidationConfig
@@ -182,7 +158,7 @@ func (v *Validator) validateFileType(filename, mimeType string) error {
 		return nil
 	}
 
-	fileType := v.detectFileType(filename, mimeType)
+	fileType := detectFileType(filename, mimeType)
 
 	// 检查文件类型是否在允许列表中
 	for _, allowedType := range v.config.AllowedTypes {
@@ -196,57 +172,16 @@ func (v *Validator) validateFileType(filename, mimeType string) error {
 }
 
 // detectFileType 检测文件类型
-func (v *Validator) detectFileType(filename, mimeType string) FileType {
+func detectFileType(filename, mimeType string) FileType {
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(filename), "."))
 
-	// 图片类型
-	imageExts := []string{"jpg", "jpeg", "png", "gif", "bmp", "webp", "svg", "ico", "tiff"}
-	imageMimes := []string{"image/jpeg", "image/png", "image/gif", "image/bmp", "image/webp", "image/svg+xml", "image/x-icon", "image/tiff"}
-
-	// 文档类型
-	docExts := []string{"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "rtf", "odt", "ods", "odp"}
-	docMimes := []string{"application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		"application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-		"application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-		"text/plain", "text/csv", "application/rtf", "application/vnd.oasis.opendocument.text",
-		"application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.presentation"}
-
-	// 视频类型
-	videoExts := []string{"mp4", "avi", "mov", "wmv", "flv", "mkv", "webm", "m4v", "mpg", "mpeg"}
-	videoMimes := []string{"video/mp4", "video/x-msvideo", "video/quicktime", "video/x-ms-wmv",
-		"video/x-flv", "video/x-matroska", "video/webm", "video/x-m4v", "video/mpeg"}
-
-	// 音频类型
-	audioExts := []string{"mp3", "wav", "ogg", "flac", "aac", "wma", "m4a"}
-	audioMimes := []string{"audio/mpeg", "audio/wav", "audio/ogg", "audio/flac", "audio/aac", "audio/x-ms-wma", "audio/mp4"}
-
-	// 压缩包类型
-	archiveExts := []string{"zip", "rar", "7z", "tar", "gz", "bz2", "xz"}
-	archiveMimes := []string{"application/zip", "application/x-rar-compressed", "application/x-7z-compressed",
-		"application/x-tar", "application/gzip", "application/x-bzip2", "application/x-xz"}
-
-	// 根据扩展名判断
-	if contains(imageExts, ext) || contains(imageMimes, mimeType) {
-		return FileTypeImage
+	// 使用storage.go中定义的辅助函数
+	fileTypeByExt := detectFileTypeByExt(ext)
+	if fileTypeByExt != FileTypeOther {
+		return fileTypeByExt
 	}
 
-	if contains(docExts, ext) || contains(docMimes, mimeType) {
-		return FileTypeDocument
-	}
-
-	if contains(videoExts, ext) || contains(videoMimes, mimeType) {
-		return FileTypeVideo
-	}
-
-	if contains(audioExts, ext) || contains(audioMimes, mimeType) {
-		return FileTypeAudio
-	}
-
-	if contains(archiveExts, ext) || contains(archiveMimes, mimeType) {
-		return FileTypeArchive
-	}
-
-	return FileTypeOther
+	return detectFileTypeByMime(mimeType)
 }
 
 // contains 检查切片是否包含元素
@@ -268,9 +203,6 @@ func (v *Validator) ScanVirus(filePath string) (bool, string, error) {
 	// 这里可以集成第三方病毒扫描服务
 	// 例如：ClamAV, VirusTotal API, 阿里云安全服务等
 
-	// 由于病毒扫描通常需要调用外部服务，这里提供框架接口
-	// 实际使用时需要实现具体的扫描逻辑
-
 	logger.Debug("Virus scan requested",
 		logger.String("file_path", filePath),
 	)
@@ -282,5 +214,5 @@ func (v *Validator) ScanVirus(filePath string) (bool, string, error) {
 
 // GetFileType 获取文件类型
 func (v *Validator) GetFileType(filename, mimeType string) FileType {
-	return v.detectFileType(filename, mimeType)
+	return detectFileType(filename, mimeType)
 }

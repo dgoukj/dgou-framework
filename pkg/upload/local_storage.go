@@ -16,8 +16,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // LocalStorage 本地存储
@@ -241,7 +239,7 @@ func (s *LocalStorage) Stat(ctx context.Context, path string) (*FileInfo, error)
 	}
 
 	return &FileInfo{
-		ID:          generateFileID(),
+		ID:          generateFileID(), // 使用storage.go中的函数
 		Name:        filepath.Base(path),
 		StorageName: filepath.Base(path),
 		Path:        path,
@@ -251,7 +249,7 @@ func (s *LocalStorage) Stat(ctx context.Context, path string) (*FileInfo, error)
 		Extension:   strings.TrimPrefix(filepath.Ext(path), "."),
 		MD5:         md5Hash,
 		SHA256:      sha256Hash,
-		StorageType: s.Type(),
+		StorageType: StorageTypeLocal, // 直接使用常量
 		CreatedAt:   fileInfo.ModTime(),
 	}, nil
 }
@@ -466,9 +464,4 @@ func getMimeType(filePath string) string {
 	}
 
 	return "application/octet-stream"
-}
-
-// generateFileID 生成文件ID
-func generateFileID() string {
-	return uuid.New().String()
 }

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -50,23 +49,24 @@ func NewOSSStorage(config *StorageConfig) (*OSSStorage, error) {
 			"Failed to create OSS client")
 	}
 
+	// 检查Bucket是否存在 - 使用 GetBucketInfo
+	_, err = client.GetBucketInfo(config.Bucket)
+	if err != nil {
+		if ossErr, ok := err.(oss.ServiceError); ok {
+			if ossErr.StatusCode == 404 {
+				return nil, errors.New(errors.CodeValidationFailed,
+					fmt.Sprintf("OSS bucket does not exist: %s", config.Bucket))
+			}
+		}
+		return nil, errors.Wrap(err, errors.CodeInternalError,
+			"Failed to check bucket existence")
+	}
+
 	// 获取Bucket
 	bucket, err := client.Bucket(config.Bucket)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternalError,
 			fmt.Sprintf("Failed to get OSS bucket: %s", config.Bucket))
-	}
-
-	// 检查Bucket是否存在
-	exist, err := bucket.IsBucketExist()
-	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternalError,
-			"Failed to check bucket existence")
-	}
-
-	if !exist {
-		return nil, errors.New(errors.CodeValidationFailed,
-			fmt.Sprintf("OSS bucket does not exist: %s", config.Bucket))
 	}
 
 	logger.Info("OSS storage initialized",
@@ -286,7 +286,7 @@ func (s *OSSStorage) Stat(ctx context.Context, path string) (*FileInfo, error) {
 		MimeType:    mimeType,
 		Extension:   strings.TrimPrefix(filepath.Ext(path), "."),
 		MD5:         md5Hash,
-		StorageType: s.Type(),
+		StorageType: StorageTypeOSS,
 		CreatedAt:   createdAt,
 	}, nil
 }

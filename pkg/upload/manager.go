@@ -15,17 +15,15 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // UploadConfig 上传配置
 type UploadConfig struct {
-	StorageType      StorageType       `mapstructure:"storage_type"`      // 存储类型
-	StorageConfig    StorageConfig     `mapstructure:"storage_config"`    // 存储配置
-	ValidationConfig ValidationConfig  `mapstructure:"validation_config"` // 验证配置
-	ChunkConfig      ChunkUploadConfig `mapstructure:"chunk_config"`      // 分片上传配置
-	EnableVirusScan  bool              `mapstructure:"enable_virus_scan"` // 是否启用病毒扫描
+	StorageType      StorageType       `mapstructure:"storage_type"`
+	StorageConfig    StorageConfig     `mapstructure:"storage_config"`
+	ValidationConfig ValidationConfig  `mapstructure:"validation_config"`
+	ChunkConfig      ChunkUploadConfig `mapstructure:"chunk_config"`
+	EnableVirusScan  bool              `mapstructure:"enable_virus_scan"`
 }
 
 // UploadManager 上传管理器
@@ -39,14 +37,14 @@ type UploadManager struct {
 
 // UploadOptions 上传选项
 type UploadOptions struct {
-	UploaderID   string                 // 上传者ID
-	UploaderIP   string                 // 上传者IP
-	IsPublic     bool                   // 是否公开
-	Category     string                 // 文件分类
-	SubDirectory string                 // 子目录
-	CustomPath   string                 // 自定义路径
-	ExpiredAt    *time.Time             // 过期时间
-	Metadata     map[string]interface{} // 元数据
+	UploaderID   string
+	UploaderIP   string
+	IsPublic     bool
+	Category     string
+	SubDirectory string
+	CustomPath   string
+	ExpiredAt    *time.Time
+	Metadata     map[string]interface{}
 }
 
 // NewUploadManager 创建上传管理器
@@ -311,7 +309,7 @@ func (m *UploadManager) FileExists(ctx context.Context, path string) (bool, erro
 // generateFileInfo 生成文件信息
 func (m *UploadManager) generateFileInfo(header *multipart.FileHeader, options *UploadOptions) (*FileInfo, error) {
 	// 生成文件ID
-	fileID := uuid.New().String()
+	fileID := generateFileID()
 
 	// 原始文件名
 	originalName := header.Filename
@@ -487,6 +485,12 @@ func (m *UploadManager) Stop() {
 
 // InitUploadManager 初始化上传管理器
 func InitUploadManager(cfg *config.Config) (*UploadManager, error) {
+	// 将字符串类型的AllowedTypes转换为FileType
+	var allowedTypes []FileType
+	for _, t := range cfg.Upload.AllowedTypes {
+		allowedTypes = append(allowedTypes, FileType(t))
+	}
+
 	uploadConfig := &UploadConfig{
 		StorageType: StorageType(cfg.Upload.StorageType),
 		StorageConfig: StorageConfig{
@@ -504,7 +508,7 @@ func InitUploadManager(cfg *config.Config) (*UploadManager, error) {
 			EnableCDN:       cfg.Upload.EnableCDN,
 		},
 		ValidationConfig: ValidationConfig{
-			AllowedTypes:      cfg.Upload.AllowedTypes,
+			AllowedTypes:      allowedTypes,
 			AllowedExtensions: cfg.Upload.AllowedExtensions,
 			AllowedMimeTypes:  cfg.Upload.AllowedMimeTypes,
 			MaxFileSize:       cfg.Upload.MaxFileSize,

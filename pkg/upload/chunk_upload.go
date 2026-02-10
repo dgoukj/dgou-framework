@@ -2,7 +2,6 @@
 package upload
 
 import (
-	"context"
 	"dgou/pkg/errors"
 	"dgou/pkg/logger"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -163,7 +161,7 @@ func (m *ChunkUploadManager) CreateUploadSession(filename string, fileSize int64
 // GetUploadSession 获取上传会话
 func (m *ChunkUploadManager) GetUploadSession(uploadID string) (*ChunkUploadSession, error) {
 	m.mu.RLock()
-	session, exists := m.uploads[uploadID]
+	sess, exists := m.uploads[uploadID] // 修改变量名避免冲突
 	m.mu.RUnlock()
 
 	if !exists {
@@ -182,7 +180,7 @@ func (m *ChunkUploadManager) GetUploadSession(uploadID string) (*ChunkUploadSess
 		return session, nil
 	}
 
-	return session, nil
+	return sess, nil
 }
 
 // UploadChunk 上传分片
@@ -367,7 +365,7 @@ func (m *ChunkUploadManager) GetUploadProgress(uploadID string) (map[string]inte
 
 // AbortUpload 中止上传
 func (m *ChunkUploadManager) AbortUpload(uploadID string) error {
-	session, err := m.GetUploadSession(uploadID)
+	_, err := m.GetUploadSession(uploadID)
 	if err != nil {
 		return err
 	}

@@ -1,5 +1,38 @@
 # 变更日志
 
+## [v1.0.3] - 2026-02-09 14:30:00
+### 修复问题
+#### 1. 上传组件类型定义重复：
+   - 将 StorageType、FileType、ValidationConfig 等类型定义统一移动到 storage.go 中
+   - 移除 manager.go、validator.go 中重复的类型定义
+   - 解决由此导致的编译错误
+#### 2. 上传组件函数重复定义：
+   - 将 generateFileID() 函数统一移动到 storage.go 中
+   - 移除 local_storage.go 和 oss_storage.go 中的重复定义
+#### 3. 上传组件类型转换错误：
+   - 修复 init.go 中 FileType 到 string 的转换问题
+   - 修复 manager.go 中配置初始化时 AllowedTypes 的转换问题
+#### 4. OSS SDK 方法不存在：
+   - 将 bucket.IsBucketExist() 替换为 client.GetBucketInfo() 来检查 Bucket 是否存在
+   - 保留 bucket.IsObjectExist() 用于检查对象是否存在
+#### 5. 接口实现不完整：
+   - 确保 LocalStorage 和 OSSStorage 完整实现 Storage 接口
+   - 修复 Type() 方法返回类型不匹配的问题
+#### 6. 配置验证器和关闭处理器：
+   - 在 config.go 中添加 RegisterValidator 和 RegisterShutdownHandler 公共函数
+   - 确保上传组件能正确注册配置验证器和关闭处理器
+#### 7. 其他改进
+   - 在 storage.go 中添加文件类型检测辅助函数
+   - 优化上传组件配置初始化逻辑
+   - 统一错误处理，提高代码可维护性
+#### 8. 影响范围
+   - 上传组件现在可以正常编译和运行
+   - 本地存储和OSS存储功能恢复正常
+   - 分片上传功能可以正常使用
+### 注意事项
+   - 如果之前有自定义的存储类型，需要根据新的类型定义进行调整
+   - 配置中的 AllowedTypes 现在需要是 FileType 类型（字符串数组），例如 ["image", "document"]
+
 ## [v1.0.2] - 2026-02-09 12:30:00
 ### 新增功能
 - 🎉 初始版本发布，提供完整的身份认证与授权解决方案

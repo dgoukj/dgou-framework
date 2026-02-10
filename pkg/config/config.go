@@ -17,22 +17,29 @@ var (
 	AppConfig  *Config
 	configOnce sync.Once
 	configMu   sync.RWMutex
+
+	// 配置验证器和关闭处理器
+	configValidators   []func(*Config) error
+	shutdownHandlers   []func() error
+	validatorsMu       sync.RWMutex
+	shutdownHandlersMu sync.RWMutex
 )
 
 // Config 全局配置结构体
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	MySQL    MySQLConfig    `mapstructure:"mysql"`
-	Redis    RedisConfig    `mapstructure:"redis"`
-	Queue    QueueConfig    `mapstructure:"queue"`
-	Upload   UploadConfig   `mapstructure:"upload"`
-	JWT      JWTConfig      `mapstructure:"jwt"`
-	OSS      OSSConfig      `mapstructure:"oss"`
-	RabbitMQ RabbitMQConfig `mapstructure:"rabbitmq"`
-	Log      LogConfig      `mapstructure:"log"`
-	Monitor  MonitorConfig  `mapstructure:"monitor"`
-	Security SecurityConfig `mapstructure:"security"`
-	Async    AsyncConfig    `mapstructure:"async"`
+	Server    ServerConfig    `mapstructure:"server"`
+	MySQL     MySQLConfigExt  `mapstructure:"mysql"` // 使用扩展的MySQL配置
+	Redis     RedisConfig     `mapstructure:"redis"`
+	Queue     QueueConfig     `mapstructure:"queue"`
+	Upload    UploadConfig    `mapstructure:"upload"`
+	JWT       JWTConfig       `mapstructure:"jwt"`
+	OSS       OSSConfig       `mapstructure:"oss"`
+	RabbitMQ  RabbitMQConfig  `mapstructure:"rabbitmq"`
+	Log       LogConfig       `mapstructure:"log"`
+	Monitor   MonitorConfig   `mapstructure:"monitor"` // 使用新的MonitorConfig
+	Security  SecurityConfig  `mapstructure:"security"`
+	Async     AsyncConfig     `mapstructure:"async"`
+	RateLimit RateLimitConfig `mapstructure:"rate_limit"` // 限流配置
 }
 
 // ServerConfig 服务配置
@@ -47,9 +54,11 @@ type ServerConfig struct {
 	KeyFile         string `mapstructure:"key_file"`
 	EnableGzip      bool   `mapstructure:"enable_gzip"`
 	MaxRequestBody  int64  `mapstructure:"max_request_body"`
+	EnablePprof     bool   `mapstructure:"enable_pprof"` // 是否启用性能分析
+	PprofPort       int    `mapstructure:"pprof_port"`   // 性能分析端口
 }
 
-// MySQLConfig MySQL配置
+// MySQLConfig 基础MySQL配置（供扩展配置使用）
 type MySQLConfig struct {
 	Host         string `mapstructure:"host"`
 	Port         int    `mapstructure:"port"`
@@ -63,6 +72,51 @@ type MySQLConfig struct {
 	Loc          string `mapstructure:"loc"`
 }
 
+// MySQLConfigExt 扩展的MySQL配置（支持读写分离）
+type MySQLConfigExt struct {
+	// 主库配置
+	Master MySQLConfig `mapstructure:"master"`
+
+	// 从库配置列表
+	Slaves []MySQLConfig `mapstructure:"slaves"`
+
+	// 连接池配置
+	Pool struct {
+		MaxOpenConns    int `mapstructure:"max_open_conns"`     // 最大打开连接数
+		MaxIdleConns    int `mapstructure:"max_idle_conns"`     // 最大空闲连接数
+		ConnMaxLifetime int `mapstructure:"conn_max_lifetime"`  // 连接最大生命周期(秒)
+		ConnMaxIdleTime int `mapstructure:"conn_max_idle_time"` // 连接最大空闲时间(秒)
+	} `mapstructure:"pool"`
+
+	// 日志配置
+	Log struct {
+		SlowThreshold int    `mapstructure:"slow_threshold"` // 慢查询阈值(毫秒)
+		EnableLogging bool   `mapstructure:"enable_logging"` // 是否启用SQL日志
+		LogLevel      string `mapstructure:"log_level"`      // 日志级别：silent, error, warn, info
+	} `mapstructure:"log"`
+
+	// 性能配置
+	Performance struct {
+		PrepareStmt       bool `mapstructure:"prepare_stmt"`        // 是否启用预编译语句
+		DisableForeignKey bool `mapstructure:"disable_foreign_key"` // 是否禁用外键约束
+	} `mapstructure:"performance"`
+}
+
+// GetMasterConfig 获取主库配置
+func (c *MySQLConfigExt) GetMasterConfig() *MySQLConfig {
+	return &c.Master
+}
+
+// GetSlaveConfigs 获取从库配置列表
+func (c *MySQLConfigExt) GetSlaveConfigs() []MySQLConfig {
+	return c.Slaves
+}
+
+// HasSlaves 检查是否有从库配置
+func (c *MySQLConfigExt) HasSlaves() bool {
+	return len(c.Slaves) > 0
+}
+
 // RedisConfig Redis配置
 type RedisConfig struct {
 	Addr         string `mapstructure:"addr"`
@@ -71,37 +125,60 @@ type RedisConfig struct {
 	PoolSize     int    `mapstructure:"pool_size"`
 	MinIdleConns int    `mapstructure:"min_idle_conns"`
 	MaxRetries   int    `mapstructure:"max_retries"`
+	DialTimeout  int    `mapstructure:"dial_timeout"`  // 连接超时(秒)
+	ReadTimeout  int    `mapstructure:"read_timeout"`  // 读取超时(秒)
+	WriteTimeout int    `mapstructure:"write_timeout"` // 写入超时(秒)
+	IdleTimeout  int    `mapstructure:"idle_timeout"`  // 空闲连接超时(秒)
 }
 
 // QueueConfig 队列配置
 type QueueConfig struct {
 	Broker     string `mapstructure:"broker"`
 	BufferSize int    `mapstructure:"buffer_size"`
+	WorkerNum  int    `mapstructure:"worker_num"`  // 工作协程数
+	RetryTimes int    `mapstructure:"retry_times"` // 重试次数
 }
 
 // UploadConfig 上传配置
 type UploadConfig struct {
-	Type      UploadType `mapstructure:"type"`
-	LocalPath string     `mapstructure:"local_path"`
-	MaxSize   int64      `mapstructure:"max_size"`
-	AllowExts []string   `mapstructure:"allow_exts"`
+	StorageType       string        `mapstructure:"storage_type"`
+	BasePath          string        `mapstructure:"base_path"`
+	BaseURL           string        `mapstructure:"base_url"`
+	MaxFileSize       int64         `mapstructure:"max_file_size"`
+	AllowedTypes      []string      `mapstructure:"allowed_types"`
+	AllowedMimeTypes  []string      `mapstructure:"allowed_mime_types"`
+	AllowedExtensions []string      `mapstructure:"allowed_extensions"`
+	ChunkEnabled      bool          `mapstructure:"chunk_enabled"`
+	ChunkSize         int64         `mapstructure:"chunk_size"`
+	MaxChunks         int           `mapstructure:"max_chunks"`
+	TempDir           string        `mapstructure:"temp_dir"`
+	CleanupInterval   time.Duration `mapstructure:"cleanup_interval"`
+	MaxTempFileAge    time.Duration `mapstructure:"max_temp_file_age"`
+	EnableResumable   bool          `mapstructure:"enable_resumable"`
+	EnableVirusScan   bool          `mapstructure:"enable_virus_scan"`
+	EnableCDN         bool          `mapstructure:"enable_cdn"`
+	CDNURL            string        `mapstructure:"cdn_url"`
+	AccessKeyID       string        `mapstructure:"access_key_id"`
+	AccessKeySecret   string        `mapstructure:"access_key_secret"`
+	Endpoint          string        `mapstructure:"endpoint"`
+	Bucket            string        `mapstructure:"bucket"`
+	Region            string        `mapstructure:"region"`
+	UseHTTPS          bool          `mapstructure:"use_https"`
+	MinFileSize       int64         `mapstructure:"min_file_size"`
+	MaxFileNameLength int           `mapstructure:"max_file_name_length"`
+	ValidateVirus     bool          `mapstructure:"validate_virus"`
+	ScanTimeout       int           `mapstructure:"scan_timeout"`
 }
-
-// UploadType 上传类型
-type UploadType string
-
-const (
-	Local UploadType = "local"
-	OSS   UploadType = "oss"
-)
 
 // JWTConfig JWT配置
 type JWTConfig struct {
-	Secret   string `mapstructure:"secret"`
-	Issuer   string `mapstructure:"issuer"`
-	Expire   int    `mapstructure:"expire_hours"`
-	Refresh  int    `mapstructure:"refresh_hours"`
-	Audience string `mapstructure:"audience"`
+	Secret     string `mapstructure:"secret"`
+	Issuer     string `mapstructure:"issuer"`
+	Expire     int    `mapstructure:"expire_hours"`  // 过期时间(小时)
+	Refresh    int    `mapstructure:"refresh_hours"` // 刷新时间(小时)
+	Audience   string `mapstructure:"audience"`      // 受众
+	SigningKey string `mapstructure:"signing_key"`   // 签名密钥
+	Algorithm  string `mapstructure:"algorithm"`     // 签名算法
 }
 
 // OSSConfig OSS配置
@@ -111,12 +188,22 @@ type OSSConfig struct {
 	AccessKeySecret string `mapstructure:"access_key_secret"`
 	BucketName      string `mapstructure:"bucket_name"`
 	Domain          string `mapstructure:"domain"`
+	Region          string `mapstructure:"region"`
+	UseHTTPS        bool   `mapstructure:"use_https"`
+	EnableCDN       bool   `mapstructure:"enable_cdn"`
 }
 
 // RabbitMQConfig RabbitMQ配置
 type RabbitMQConfig struct {
-	URL      string `mapstructure:"url"`
-	Exchange string `mapstructure:"exchange"`
+	URL        string                 `mapstructure:"url"`
+	Exchange   string                 `mapstructure:"exchange"`
+	QueueName  string                 `mapstructure:"queue_name"`
+	RoutingKey string                 `mapstructure:"routing_key"`
+	Durable    bool                   `mapstructure:"durable"`
+	AutoDelete bool                   `mapstructure:"auto_delete"`
+	Exclusive  bool                   `mapstructure:"exclusive"`
+	NoWait     bool                   `mapstructure:"no_wait"`
+	Arguments  map[string]interface{} `mapstructure:"arguments"`
 }
 
 // LogConfig 日志配置
@@ -128,6 +215,27 @@ type LogConfig struct {
 	MaxAge     int    `mapstructure:"max_age"`
 	Compress   bool   `mapstructure:"compress"`
 	AddCaller  bool   `mapstructure:"add_caller"`
+	AddStack   bool   `mapstructure:"add_stack"`   // 是否添加堆栈信息
+	JSONFormat bool   `mapstructure:"json_format"` // 是否使用JSON格式
+	LocalTime  bool   `mapstructure:"local_time"`  // 是否使用本地时间
+}
+
+// MonitorConfig 监控配置
+type MonitorConfig struct {
+	EnableMetrics     bool    `mapstructure:"enable_metrics"`      // 是否启用指标监控
+	MetricsPath       string  `mapstructure:"metrics_path"`        // 指标路径
+	EnableHealth      bool    `mapstructure:"enable_health"`       // 是否启用健康检查
+	HealthPath        string  `mapstructure:"health_path"`         // 健康检查路径
+	EnableProfiling   bool    `mapstructure:"enable_profiling"`    // 是否启用性能分析
+	ProfilePath       string  `mapstructure:"profile_path"`        // 性能分析路径
+	ServiceName       string  `mapstructure:"service_name"`        // 服务名称
+	ServiceVersion    string  `mapstructure:"service_version"`     // 服务版本
+	Environment       string  `mapstructure:"environment"`         // 环境
+	EnableTracing     bool    `mapstructure:"enable_tracing"`      // 是否启用分布式追踪
+	JaegerEndpoint    string  `mapstructure:"jaeger_endpoint"`     // Jaeger端点
+	TraceSamplingRate float64 `mapstructure:"trace_sampling_rate"` // 追踪采样率
+	EnableAlerts      bool    `mapstructure:"enable_alerts"`       // 是否启用告警
+	AlertWebhookURL   string  `mapstructure:"alert_webhook_url"`   // 告警Webhook URL
 }
 
 // SecurityConfig 安全配置
@@ -140,21 +248,24 @@ type SecurityConfig struct {
 	TrustedProxies  []string `mapstructure:"trusted_proxies"`
 	EnableXSSFilter bool     `mapstructure:"enable_xss_filter"`
 	EnableHSTS      bool     `mapstructure:"enable_hsts"`
+	EnableCSP       bool     `mapstructure:"enable_csp"`      // 内容安全策略
+	AllowedOrigins  []string `mapstructure:"allowed_origins"` // 允许的源
+	AllowedMethods  []string `mapstructure:"allowed_methods"` // 允许的方法
 }
 
-// 限流配置
+// RateLimitConfig 限流配置
 type RateLimitConfig struct {
-	EnableIPLimit    bool   `yaml:"enable_ip_limit" json:"enable_ip_limit"`
-	EnableTokenLimit bool   `yaml:"enable_token_limit" json:"enable_token_limit"`
-	Limit            int    `yaml:"limit" json:"limit"`
-	WindowSeconds    int    `yaml:"window_seconds" json:"window_seconds"`
-	RedisAddr        string `yaml:"redis_addr" json:"redis_addr"`
-	RedisPassword    string `yaml:"redis_password" json:"redis_password"`
-	RedisDB          int    `yaml:"redis_db" json:"redis_db"`
-	FailOpen         bool   `yaml:"fail_open" json:"fail_open"` // Redis故障时是否允许请求通过
+	EnableIPLimit    bool   `mapstructure:"enable_ip_limit"`
+	EnableTokenLimit bool   `mapstructure:"enable_token_limit"`
+	Limit            int    `mapstructure:"limit"`
+	WindowSeconds    int    `mapstructure:"window_seconds"`
+	RedisAddr        string `mapstructure:"redis_addr"`
+	RedisPassword    string `mapstructure:"redis_password"`
+	RedisDB          int    `mapstructure:"redis_db"`
+	FailOpen         bool   `mapstructure:"fail_open"` // Redis故障时是否允许请求通过
 }
 
-// 异步配置
+// AsyncConfig 异步配置
 type AsyncConfig struct {
 	MaxWorkers     int           `mapstructure:"max_workers"`
 	MaxQueueSize   int           `mapstructure:"max_queue_size"`
@@ -215,6 +326,11 @@ func LoadConfig(configPath ...string) *Config {
 			log.Fatalf("Config validation failed: %v", err)
 		}
 
+		// 执行注册的验证器
+		if err := ValidateConfig(config); err != nil {
+			log.Fatalf("Registered config validators failed: %v", err)
+		}
+
 		// 设置全局配置
 		configMu.Lock()
 		AppConfig = config
@@ -234,6 +350,12 @@ func LoadConfig(configPath ...string) *Config {
 			// 验证新配置
 			if err := validateConfig(newConfig); err != nil {
 				log.Printf("New config validation failed: %v", err)
+				return
+			}
+
+			// 执行注册的验证器
+			if err := ValidateConfig(newConfig); err != nil {
+				log.Printf("Registered config validators failed for new config: %v", err)
 				return
 			}
 
@@ -270,18 +392,49 @@ func createDefaultConfig() *Config {
 			EnableHTTPS:     false,
 			EnableGzip:      true,
 			MaxRequestBody:  10 << 20, // 10MB
+			EnablePprof:     false,
+			PprofPort:       6060,
 		},
-		MySQL: MySQLConfig{
-			Host:         "localhost",
-			Port:         3306,
-			User:         "root",
-			Password:     "",
-			DBName:       "test",
-			MaxOpenConns: 100,
-			MaxIdleConns: 10,
-			Charset:      "utf8mb4",
-			ParseTime:    true,
-			Loc:          "Local",
+		MySQL: MySQLConfigExt{
+			Master: MySQLConfig{
+				Host:         "localhost",
+				Port:         3306,
+				User:         "root",
+				Password:     "",
+				DBName:       "dgou",
+				MaxOpenConns: 100,
+				MaxIdleConns: 10,
+				Charset:      "utf8mb4",
+				ParseTime:    true,
+				Loc:          "Local",
+			},
+			Pool: struct {
+				MaxOpenConns    int `mapstructure:"max_open_conns"`
+				MaxIdleConns    int `mapstructure:"max_idle_conns"`
+				ConnMaxLifetime int `mapstructure:"conn_max_lifetime"`
+				ConnMaxIdleTime int `mapstructure:"conn_max_idle_time"`
+			}{
+				MaxOpenConns:    100,
+				MaxIdleConns:    10,
+				ConnMaxLifetime: 3600, // 1小时
+				ConnMaxIdleTime: 1800, // 30分钟
+			},
+			Log: struct {
+				SlowThreshold int    `mapstructure:"slow_threshold"`
+				EnableLogging bool   `mapstructure:"enable_logging"`
+				LogLevel      string `mapstructure:"log_level"`
+			}{
+				SlowThreshold: 200, // 200毫秒
+				EnableLogging: true,
+				LogLevel:      "warn",
+			},
+			Performance: struct {
+				PrepareStmt       bool `mapstructure:"prepare_stmt"`
+				DisableForeignKey bool `mapstructure:"disable_foreign_key"`
+			}{
+				PrepareStmt:       true,
+				DisableForeignKey: false,
+			},
 		},
 		Redis: RedisConfig{
 			Addr:         "localhost:6379",
@@ -290,23 +443,75 @@ func createDefaultConfig() *Config {
 			PoolSize:     100,
 			MinIdleConns: 10,
 			MaxRetries:   3,
+			DialTimeout:  5,
+			ReadTimeout:  3,
+			WriteTimeout: 3,
+			IdleTimeout:  300,
 		},
 		Queue: QueueConfig{
 			Broker:     "redis",
 			BufferSize: 1000,
+			WorkerNum:  10,
+			RetryTimes: 3,
 		},
 		Upload: UploadConfig{
-			Type:      Local,
-			LocalPath: "./uploads",
-			MaxSize:   10 << 20, // 10MB
-			AllowExts: []string{".jpg", ".jpeg", ".png", ".gif", ".pdf"},
+			StorageType:       "local",
+			BasePath:          "./uploads",
+			BaseURL:           "http://localhost:8080/uploads",
+			MaxFileSize:       10 << 20, // 10MB
+			AllowedTypes:      []string{"image", "document"},
+			AllowedMimeTypes:  []string{"image/jpeg", "image/png", "application/pdf"},
+			AllowedExtensions: []string{".jpg", ".jpeg", ".png", ".pdf", ".doc", ".docx"},
+			ChunkEnabled:      true,
+			ChunkSize:         5 << 20, // 5MB
+			MaxChunks:         1000,
+			TempDir:           "/tmp/upload_chunks",
+			CleanupInterval:   30 * time.Minute,
+			MaxTempFileAge:    24 * time.Hour,
+			EnableResumable:   true,
+			EnableVirusScan:   false,
+			EnableCDN:         false,
+			CDNURL:            "",
+			AccessKeyID:       "",
+			AccessKeySecret:   "",
+			Endpoint:          "",
+			Bucket:            "",
+			Region:            "",
+			UseHTTPS:          false,
+			MinFileSize:       0,
+			MaxFileNameLength: 255,
+			ValidateVirus:     false,
+			ScanTimeout:       30,
 		},
 		JWT: JWTConfig{
-			Secret:   "your-secret-key-at-least-32-chars-long",
-			Issuer:   "app",
-			Expire:   24,
-			Refresh:  168, // 7天
-			Audience: "app-client",
+			Secret:     "your-secret-key-at-least-32-chars-long",
+			Issuer:     "dgou",
+			Expire:     24,  // 24小时
+			Refresh:    168, // 7天
+			Audience:   "dgou-client",
+			SigningKey: "your-signing-key",
+			Algorithm:  "HS256",
+		},
+		OSS: OSSConfig{
+			Endpoint:        "",
+			AccessKeyID:     "",
+			AccessKeySecret: "",
+			BucketName:      "",
+			Domain:          "",
+			Region:          "oss-cn-hangzhou",
+			UseHTTPS:        true,
+			EnableCDN:       false,
+		},
+		RabbitMQ: RabbitMQConfig{
+			URL:        "amqp://guest:guest@localhost:5672/",
+			Exchange:   "dgou_exchange",
+			QueueName:  "dgou_queue",
+			RoutingKey: "dgou_routing_key",
+			Durable:    true,
+			AutoDelete: false,
+			Exclusive:  false,
+			NoWait:     false,
+			Arguments:  nil,
 		},
 		Log: LogConfig{
 			Level:      "info",
@@ -316,14 +521,25 @@ func createDefaultConfig() *Config {
 			MaxAge:     7,
 			Compress:   true,
 			AddCaller:  true,
+			AddStack:   true,
+			JSONFormat: true,
+			LocalTime:  false,
 		},
 		Monitor: MonitorConfig{
-			EnableMetrics:   true,
-			MetricsPath:     "/metrics",
-			EnableHealth:    true,
-			HealthPath:      "/health",
-			EnableProfiling: false,
-			ProfilePath:     "/debug/pprof",
+			EnableMetrics:     true,
+			MetricsPath:       "/metrics",
+			EnableHealth:      true,
+			HealthPath:        "/health",
+			EnableProfiling:   false,
+			ProfilePath:       "/debug/pprof",
+			ServiceName:       "dgou-app",
+			ServiceVersion:    "1.0.0",
+			Environment:       "development",
+			EnableTracing:     false,
+			JaegerEndpoint:    "http://localhost:14268/api/traces",
+			TraceSamplingRate: 0.1,
+			EnableAlerts:      false,
+			AlertWebhookURL:   "",
 		},
 		Security: SecurityConfig{
 			EnableRateLimit: true,
@@ -332,6 +548,19 @@ func createDefaultConfig() *Config {
 			EnableCSRF:      false,
 			EnableXSSFilter: true,
 			EnableHSTS:      true,
+			EnableCSP:       false,
+			AllowedOrigins:  []string{"*"},
+			AllowedMethods:  []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		},
+		RateLimit: RateLimitConfig{
+			EnableIPLimit:    true,
+			EnableTokenLimit: false,
+			Limit:            100,
+			WindowSeconds:    60,
+			RedisAddr:        "localhost:6379",
+			RedisPassword:    "",
+			RedisDB:          0,
+			FailOpen:         true,
 		},
 		Async: AsyncConfig{
 			MaxWorkers:     100,
@@ -346,14 +575,72 @@ func createDefaultConfig() *Config {
 
 // mergeWithDefaults 合并默认值
 func mergeWithDefaults(config, defaults *Config) {
-	// 这里可以使用反射或手动合并，为了简单起见，我们只处理关键字段
-	// 实际项目中可以使用更完善的合并逻辑
+	// 如果端口为0，使用默认端口
 	if config.Server.Port == 0 {
 		config.Server.Port = defaults.Server.Port
 	}
+
+	if config.Server.Mode == "" {
+		config.Server.Mode = defaults.Server.Mode
+	}
+
+	// JWT密钥长度检查
 	if config.JWT.Secret == "" || len(config.JWT.Secret) < 32 {
 		config.JWT.Secret = defaults.JWT.Secret
 		log.Printf("Warning: JWT secret is too short, using default")
+	}
+
+	// MySQL配置合并
+	if config.MySQL.Master.Host == "" {
+		config.MySQL.Master = defaults.MySQL.Master
+	}
+
+	if config.MySQL.Pool.MaxOpenConns == 0 {
+		config.MySQL.Pool = defaults.MySQL.Pool
+	}
+
+	if config.MySQL.Log.SlowThreshold == 0 {
+		config.MySQL.Log = defaults.MySQL.Log
+	}
+
+	// 上传配置合并
+	if config.Upload.StorageType == "" {
+		config.Upload.StorageType = defaults.Upload.StorageType
+	}
+	if config.Upload.BasePath == "" {
+		config.Upload.BasePath = defaults.Upload.BasePath
+	}
+	if config.Upload.BaseURL == "" {
+		config.Upload.BaseURL = defaults.Upload.BaseURL
+	}
+	if config.Upload.MaxFileSize == 0 {
+		config.Upload.MaxFileSize = defaults.Upload.MaxFileSize
+	}
+	if len(config.Upload.AllowedTypes) == 0 {
+		config.Upload.AllowedTypes = defaults.Upload.AllowedTypes
+	}
+	if len(config.Upload.AllowedMimeTypes) == 0 {
+		config.Upload.AllowedMimeTypes = defaults.Upload.AllowedMimeTypes
+	}
+	if len(config.Upload.AllowedExtensions) == 0 {
+		config.Upload.AllowedExtensions = defaults.Upload.AllowedExtensions
+	}
+	if config.Upload.ChunkSize == 0 {
+		config.Upload.ChunkSize = defaults.Upload.ChunkSize
+	}
+	if config.Upload.TempDir == "" {
+		config.Upload.TempDir = defaults.Upload.TempDir
+	}
+	if config.Upload.CleanupInterval == 0 {
+		config.Upload.CleanupInterval = defaults.Upload.CleanupInterval
+	}
+	if config.Upload.MaxTempFileAge == 0 {
+		config.Upload.MaxTempFileAge = defaults.Upload.MaxTempFileAge
+	}
+
+	// 监控配置合并
+	if config.Monitor.ServiceName == "" {
+		config.Monitor = defaults.Monitor
 	}
 }
 
@@ -363,7 +650,7 @@ func validateConfig(config *Config) error {
 		return fmt.Errorf("invalid server port: %d", config.Server.Port)
 	}
 
-	if config.MySQL.Host == "" {
+	if config.MySQL.Master.Host == "" {
 		return fmt.Errorf("mysql host is required")
 	}
 
@@ -389,6 +676,40 @@ func validateConfig(config *Config) error {
 		}
 	}
 
+	// 验证上传配置
+	if config.Upload.StorageType == "" {
+		return fmt.Errorf("upload storage type is required")
+	}
+
+	if config.Upload.StorageType == "local" && config.Upload.BasePath == "" {
+		return fmt.Errorf("base_path is required for local storage")
+	}
+
+	if config.Upload.StorageType == "oss" {
+		if config.Upload.AccessKeyID == "" || config.Upload.AccessKeySecret == "" {
+			return fmt.Errorf("access_key_id and access_key_secret are required for OSS storage")
+		}
+		if config.Upload.Endpoint == "" {
+			return fmt.Errorf("endpoint is required for OSS storage")
+		}
+		if config.Upload.Bucket == "" {
+			return fmt.Errorf("bucket is required for OSS storage")
+		}
+	}
+
+	if config.Upload.MaxFileSize <= 0 {
+		return fmt.Errorf("max_file_size must be greater than 0")
+	}
+
+	// 验证监控配置
+	if config.Monitor.EnableMetrics && config.Monitor.MetricsPath == "" {
+		return fmt.Errorf("metrics_path is required when enable_metrics is true")
+	}
+
+	if config.Monitor.EnableHealth && config.Monitor.HealthPath == "" {
+		return fmt.Errorf("health_path is required when enable_health is true")
+	}
+
 	return nil
 }
 
@@ -398,4 +719,66 @@ func GetEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// ==================== 配置验证器和关闭处理器 ====================
+
+// RegisterValidator 注册配置验证器（公共函数）
+func RegisterValidator(fn func(*Config) error) {
+	validatorsMu.Lock()
+	defer validatorsMu.Unlock()
+	configValidators = append(configValidators, fn)
+}
+
+// RegisterShutdownHandler 注册优雅关闭处理器（公共函数）
+func RegisterShutdownHandler(fn func() error) {
+	shutdownHandlersMu.Lock()
+	defer shutdownHandlersMu.Unlock()
+	shutdownHandlers = append(shutdownHandlers, fn)
+}
+
+// ValidateConfig 执行所有注册的配置验证器
+func ValidateConfig(cfg *Config) error {
+	validatorsMu.RLock()
+	validators := make([]func(*Config) error, len(configValidators))
+	copy(validators, configValidators)
+	validatorsMu.RUnlock()
+
+	var errs []error
+	for _, validator := range validators {
+		if err := validator(cfg); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("config validation errors: %v", errs)
+	}
+
+	return nil
+}
+
+// ExecuteShutdownHandlers 执行所有关闭处理器
+func ExecuteShutdownHandlers() error {
+	shutdownHandlersMu.RLock()
+	handlers := make([]func() error, len(shutdownHandlers))
+	copy(handlers, shutdownHandlers)
+	shutdownHandlersMu.RUnlock()
+
+	var errs []error
+	for _, handler := range handlers {
+		if err := handler(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("shutdown errors: %v", errs)
+	}
+	return nil
+}
+
+// Shutdown 执行优雅关闭
+func Shutdown() error {
+	return ExecuteShutdownHandlers()
 }
