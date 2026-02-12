@@ -3,24 +3,24 @@ package app
 import (
 	"context"
 	"dgou/pkg/logger"
+	"go.uber.org/zap"
 	"sort"
 	"sync"
 	"time"
 )
 
-// ShutdownPriority 关闭优先级
 type ShutdownPriority int
 
 const (
-	PriorityHighest ShutdownPriority = iota // 最高优先级（最先执行）
+	PriorityHighest ShutdownPriority = iota
 	PriorityHigh
 	PriorityNormal
 	PriorityLow
-	PriorityLowest // 最低优先级（最后执行）
+	PriorityLowest
 )
 
-// ShutdownHandler 优雅关闭处理器
 type ShutdownHandler struct {
+	log      *logger.Logger
 	handlers []shutdownEntry
 	mu       sync.RWMutex
 	timeout  time.Duration
@@ -33,24 +33,20 @@ type shutdownEntry struct {
 	name     string
 }
 
-// NewShutdownHandler 创建新的关闭处理器
-func NewShutdownHandler(timeout time.Duration) *ShutdownHandler {
+func NewShutdownHandler(log *logger.Logger, timeout time.Duration) *ShutdownHandler {
 	return &ShutdownHandler{
-		handlers: make([]shutdownEntry, 0),
-		timeout:  timeout,
+		log:     log,
+		timeout: timeout,
 	}
 }
 
-// Register 注册关闭处理器
 func (s *ShutdownHandler) Register(handler func(), priority ShutdownPriority, name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	if s.executed {
-		logger.Warn("Shutdown handler already executed, ignoring new registration")
+		s.log.Warn("Shutdown handler already executed, ignoring new registration", zap.String("name", name))
 		return
 	}
-
 	s.handlers = append(s.handlers, shutdownEntry{
 		handler:  handler,
 		priority: priority,
@@ -58,12 +54,10 @@ func (s *ShutdownHandler) Register(handler func(), priority ShutdownPriority, na
 	})
 }
 
-// RegisterWithDefault 使用默认优先级注册
 func (s *ShutdownHandler) RegisterWithDefault(handler func(), name string) {
 	s.Register(handler, PriorityNormal, name)
 }
 
-// Execute 执行所有关闭处理器
 func (s *ShutdownHandler) Execute() {
 	s.mu.Lock()
 	if s.executed {
@@ -73,32 +67,28 @@ func (s *ShutdownHandler) Execute() {
 	s.executed = true
 	s.mu.Unlock()
 
-	logger.Info("Executing shutdown handlers")
+	s.log.Info("Executing shutdown handlers")
 
-	// 按优先级排序（优先级高的先执行）
+	// 按优先级排序
 	s.sortHandlers()
 
-	// 创建超时上下文
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 	defer cancel()
 
-	// 执行所有处理器
 	done := make(chan struct{})
 	go func() {
 		s.executeAll()
 		close(done)
 	}()
 
-	// 等待完成或超时
 	select {
 	case <-done:
-		logger.Info("All shutdown handlers executed successfully")
+		s.log.Info("All shutdown handlers executed successfully")
 	case <-ctx.Done():
-		logger.Error("Shutdown timeout exceeded")
+		s.log.Error("Shutdown timeout exceeded")
 	}
 }
 
-// executeAll 执行所有处理器
 func (s *ShutdownHandler) executeAll() {
 	s.mu.RLock()
 	handlers := s.handlers
@@ -106,62 +96,23 @@ func (s *ShutdownHandler) executeAll() {
 
 	for _, entry := range handlers {
 		start := time.Now()
-		logger.Info("Executing shutdown handler",
-			logger.String("name", entry.name),
-			logger.Int("priority", int(entry.priority)),
-		)
-
-		// 执行处理器
+		s.log.Info("Executing shutdown handler", zap.String("name", entry.name), zap.Int("priority", int(entry.priority)))
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					logger.Error("Panic in shutdown handler",
-						logger.String("name", entry.name),
-						logger.Any("panic", r),
-					)
+					s.log.Error("Panic in shutdown handler", zap.String("name", entry.name), zap.Any("panic", r))
 				}
 			}()
-
 			entry.handler()
 		}()
-
-		elapsed := time.Since(start)
-		logger.Info("Shutdown handler completed",
-			logger.String("name", entry.name),
-			logger.Duration("elapsed", elapsed),
-		)
+		s.log.Info("Shutdown handler completed", zap.String("name", entry.name), zap.Duration("elapsed", time.Since(start)))
 	}
 }
 
-// sortHandlers 按优先级排序处理器
 func (s *ShutdownHandler) sortHandlers() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	sort.Slice(s.handlers, func(i, j int) bool {
 		return s.handlers[i].priority < s.handlers[j].priority
 	})
-}
-
-// Clear 清除所有处理器
-func (s *ShutdownHandler) Clear() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.handlers = make([]shutdownEntry, 0)
-	s.executed = false
-}
-
-// IsExecuted 检查是否已执行
-func (s *ShutdownHandler) IsExecuted() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.executed
-}
-
-// GetHandlerCount 获取处理器数量
-func (s *ShutdownHandler) GetHandlerCount() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.handlers)
 }
