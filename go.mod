@@ -1,4 +1,4 @@
-module dgou
+module github.com/dgoukj/dgou-framework
 
 go 1.24.12
 

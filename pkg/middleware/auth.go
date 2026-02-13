@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"dgou/pkg/auth"
+	"github.com/dgoukj/dgou-framework/pkg/auth"
 	"net/http"
 	"strings"
 

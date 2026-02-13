@@ -2,7 +2,7 @@ package upload
 
 import (
 	"context"
-	"dgou/pkg/logger"
+	"github.com/dgoukj/dgou-framework/pkg/logger"
 	"mime/multipart"
 	"path/filepath"
 	"strings"

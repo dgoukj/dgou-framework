@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"dgou/pkg/logger"
+	"github.com/dgoukj/dgou-framework/pkg/logger"
 	"net/http"
 	"runtime/debug"
 

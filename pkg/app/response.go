@@ -1,9 +1,9 @@
 package app
 
 import (
-	"dgou/pkg/errors"
-	"dgou/pkg/logger"
 	"fmt"
+	"github.com/dgoukj/dgou-framework/pkg/errors"
+	"github.com/dgoukj/dgou-framework/pkg/logger"
 	"net/http"
 	"runtime"
 	"time"

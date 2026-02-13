@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"dgou/pkg/app"
-	"dgou/pkg/bootstrap"
-	"dgou/pkg/middleware"
+	"github.com/dgoukj/dgou-framework/pkg/app"
+	"github.com/dgoukj/dgou-framework/pkg/bootstrap"
+	"github.com/dgoukj/dgou-framework/pkg/middleware"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"log"

@@ -9,16 +9,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"dgou/pkg/async"
-	"dgou/pkg/auth"
-	"dgou/pkg/cache"
-	"dgou/pkg/config"
-	"dgou/pkg/database"
-	"dgou/pkg/logger"
-	"dgou/pkg/middleware"
-	"dgou/pkg/monitor"
-	"dgou/pkg/queue"
-	"dgou/pkg/upload"
+	"github.com/dgoukj/dgou-framework/pkg/async"
+	"github.com/dgoukj/dgou-framework/pkg/auth"
+	"github.com/dgoukj/dgou-framework/pkg/cache"
+	"github.com/dgoukj/dgou-framework/pkg/config"
+	"github.com/dgoukj/dgou-framework/pkg/database"
+	"github.com/dgoukj/dgou-framework/pkg/logger"
+	"github.com/dgoukj/dgou-framework/pkg/middleware"
+	"github.com/dgoukj/dgou-framework/pkg/monitor"
+	"github.com/dgoukj/dgou-framework/pkg/queue"
+	"github.com/dgoukj/dgou-framework/pkg/upload"
 )
 
 // App 应用框架核心结构

@@ -11,7 +11,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.uber.org/zap"
 
-	"dgou/pkg/logger" // 请根据实际模块名调整
+	"github.com/dgoukj/dgou-framework/pkg/logger" // 请根据实际模块名调整
 )
 
 // RabbitMQConfig RabbitMQ 配置

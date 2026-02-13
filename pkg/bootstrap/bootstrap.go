@@ -5,16 +5,16 @@ import (
 
 	"go.uber.org/zap"
 
-	"dgou/pkg/app"
-	"dgou/pkg/async"
-	"dgou/pkg/auth"
-	"dgou/pkg/cache"
-	"dgou/pkg/config"
-	"dgou/pkg/database"
-	"dgou/pkg/logger"
-	"dgou/pkg/monitor"
-	"dgou/pkg/queue"
-	"dgou/pkg/upload"
+	"github.com/dgoukj/dgou-framework/pkg/app"
+	"github.com/dgoukj/dgou-framework/pkg/async"
+	"github.com/dgoukj/dgou-framework/pkg/auth"
+	"github.com/dgoukj/dgou-framework/pkg/cache"
+	"github.com/dgoukj/dgou-framework/pkg/config"
+	"github.com/dgoukj/dgou-framework/pkg/database"
+	"github.com/dgoukj/dgou-framework/pkg/logger"
+	"github.com/dgoukj/dgou-framework/pkg/monitor"
+	"github.com/dgoukj/dgou-framework/pkg/queue"
+	"github.com/dgoukj/dgou-framework/pkg/upload"
 )
 
 // AppResult 封装应用实例及其清理函数

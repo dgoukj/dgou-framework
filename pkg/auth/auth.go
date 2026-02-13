@@ -2,7 +2,7 @@ package auth
 
 import (
 	"context"
-	"dgou/pkg/cache"
+	"github.com/dgoukj/dgou-framework/pkg/cache"
 	"strconv"
 	"time"
 

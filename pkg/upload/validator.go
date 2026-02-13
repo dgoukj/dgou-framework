@@ -1,7 +1,7 @@
 package upload
 
 import (
-	"dgou/pkg/logger"
+	"github.com/dgoukj/dgou-framework/pkg/logger"
 	pkgErrors "github.com/pkg/errors"
 	"go.uber.org/zap"
 	"mime/multipart"

@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"dgou/pkg/logger"
+	"github.com/dgoukj/dgou-framework/pkg/logger"
 	"go.uber.org/zap"
 	"sort"
 	"sync"
