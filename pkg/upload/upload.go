@@ -3,6 +3,8 @@ package upload
 import (
 	"context"
 	"github.com/dgoukj/dgou-framework/pkg/logger"
+	pkgErrors "github.com/pkg/errors"
+	"io"
 	"mime/multipart"
 	"path/filepath"
 	"strings"
@@ -87,6 +89,7 @@ type UploadOptions struct {
 	IsPublic   bool
 	Category   string
 	Metadata   map[string]interface{}
+	MimeType   string
 }
 
 type UploadOption func(*UploadOptions)
@@ -102,4 +105,47 @@ func WithCategory(category string) UploadOption {
 }
 func WithMetadata(md map[string]interface{}) UploadOption {
 	return func(o *UploadOptions) { o.Metadata = md }
+}
+
+// WithMimeType 设置 MIME 类型
+func WithMimeType(mime string) UploadOption {
+	return func(o *UploadOptions) { o.MimeType = mime }
+}
+
+// UploadReader 直接上传 io.Reader 流
+func (m *Manager) UploadReader(ctx context.Context, filename string, reader io.Reader, size int64, opts ...UploadOption) (*FileInfo, error) {
+	// 验证大小
+	if m.config.MaxFileSize > 0 && size > m.config.MaxFileSize {
+		return nil, pkgErrors.Errorf("file size exceeds maximum allowed size: %d bytes", m.config.MaxFileSize)
+	}
+
+	opt := &UploadOptions{IsPublic: true}
+	for _, o := range opts {
+		o(opt)
+	}
+
+	// 生成路径
+	path := m.generatePath(filename, opt)
+
+	info := &FileInfo{
+		ID:          uuid.New().String(),
+		Name:        filename,
+		Path:        path,
+		Size:        size,
+		MimeType:    opt.MimeType,
+		Extension:   strings.TrimPrefix(filepath.Ext(filename), "."),
+		StorageType: m.storage.Type(),
+		IsPublic:    opt.IsPublic,
+		CreatedAt:   time.Now(),
+		UploaderID:  opt.UploaderID,
+		Metadata:    opt.Metadata,
+	}
+	if info.MimeType == "" {
+		info.MimeType = "application/octet-stream"
+	}
+
+	if err := m.storage.Put(ctx, info, reader); err != nil {
+		return nil, err
+	}
+	return info, nil
 }
