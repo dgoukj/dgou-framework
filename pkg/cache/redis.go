@@ -57,6 +57,10 @@ func (r *RedisCache) key(k string) string {
 	return r.prefix + ":" + k
 }
 
+func (r *RedisCache) GetClient() *redis.Client {
+	return r.client
+}
+
 func (r *RedisCache) Get(ctx context.Context, key string) (string, error) {
 	val, err := r.client.Get(ctx, r.key(key)).Result()
 	if err == redis.Nil {
