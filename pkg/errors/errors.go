@@ -8,13 +8,14 @@ import (
 type ErrorCode int
 
 const (
-	CodeUnknown          ErrorCode = 1000
-	CodeValidationFailed ErrorCode = 1001
-	CodeResourceNotFound ErrorCode = 1002
-	CodeUnauthorized     ErrorCode = 1003
-	CodeForbidden        ErrorCode = 1004
-	CodeTooManyRequests  ErrorCode = 1005
-	CodeInternalError    ErrorCode = 1006
+	CodeUnknown            ErrorCode = 1000
+	CodeValidationFailed   ErrorCode = 1001
+	CodeResourceNotFound   ErrorCode = 1002
+	CodeUnauthorized       ErrorCode = 1003
+	CodeForbidden          ErrorCode = 1004
+	CodeTooManyRequests    ErrorCode = 1005
+	CodeInternalError      ErrorCode = 1006
+	CodeServiceUnavailable ErrorCode = 1007
 )
 
 type Error struct {
@@ -110,6 +111,8 @@ func getHTTPStatusCode(code ErrorCode) int {
 		return 404
 	case CodeTooManyRequests:
 		return 429
+	case CodeServiceUnavailable:
+		return 503
 	default:
 		return 500
 	}
